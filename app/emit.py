@@ -17,6 +17,11 @@ try:
 except Exception:  # 連 import 都失敗也不能炸掉 hook
     sys.exit(0)
 
+try:
+    import winfocus
+except Exception:
+    winfocus = None
+
 
 def detect_error(data: dict) -> bool:
     """PostToolUse 時粗略判斷工具是否出錯。"""
@@ -75,6 +80,7 @@ def main() -> None:
         "ts": time.time(),
         "transcript": data.get("transcript_path", ""),  # 地圖端拿它的 mtime 當心跳偵測中斷
         "cwd": (data.get("workspace") or {}).get("project_dir") or data.get("cwd", ""),
+        "hwnd": (winfocus.terminal_hwnd() if winfocus is not None else 0),  # 終端視窗 handle，點機器人聚焦用
     }
     states.write_state(session_id, payload)
 

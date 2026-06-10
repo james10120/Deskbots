@@ -1,0 +1,25 @@
+; FunAI Robot Map — Godot 4.6 專案設定
+; 透明、無邊框、永遠置頂的桌面疊層；像素風用最近鄰取樣
+
+config_version=5
+
+[application]
+
+config/name="FunAI Robot Map"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.6")
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=400
+window/size/transparent=true
+window/size/borderless=true
+window/size/always_on_top=true
+window/per_pixel_transparency/allowed=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/canvas_textures/default_texture_filter=0

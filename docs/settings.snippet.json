@@ -1,0 +1,30 @@
+{
+  "_comment": "把 hooks 與 statusLine 合併進 ~/.claude/settings.json（全域，涵蓋所有專案）。事件名以指令參數傳給 emit.py。",
+  "statusLine": {
+    "type": "command",
+    "command": "py D:/Work/FunAI/app/statusline.py"
+  },
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py SessionStart" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py UserPromptSubmit" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py PreToolUse" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py PostToolUse" } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py Notification" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py Stop" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py SessionEnd" } ] }
+    ]
+  }
+}

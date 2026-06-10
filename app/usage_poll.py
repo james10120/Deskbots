@@ -28,6 +28,9 @@ except Exception:
 
 POLL_SEC = 2.0
 USAGE_FILE = states.RUNTIME_DIR / "usage.json"
+LOCK_FILE = states.RUNTIME_DIR / "usage.lock"
+
+_lock_handle = None   # 全域持有，鎖才不會在函式返回後被釋放
 
 # session_id -> 累計狀態（常駐記憶體，重啟才從頭算）
 _acc: dict[str, dict] = {}
@@ -161,7 +164,41 @@ def _scan_once() -> None:
         pass
 
 
+def _acquire_singleton() -> bool:
+    """確保同時只有一支 usage_poll 在跑。拿不到鎖回 False（→ 該退出）。
+
+    用 OS 層的檔案鎖（行程結束會自動釋放，免清殘留 pid 檔）。
+    開不了鎖檔或平台不支援 → 放行，絕不因為上鎖失敗而擋掉功能。
+    """
+    global _lock_handle
+    try:
+        states.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        fh = open(LOCK_FILE, "a+")
+    except OSError:
+        return True
+    fh.seek(0)   # 各實例都鎖同一個位元組（位置 0），互斥才成立
+    try:
+        import msvcrt
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        fh.close()
+        return False        # 另一支實例握著鎖
+    except Exception:
+        try:                # 非 Windows 退回 fcntl
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            return False
+        except Exception:
+            pass            # 兩者都沒有 → 放行
+    _lock_handle = fh
+    return True
+
+
 def main() -> None:
+    if not _acquire_singleton():
+        return   # 已有一支 usage_poll 在跑，直接退出
     while True:
         try:
             _scan_once()

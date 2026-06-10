@@ -12,10 +12,19 @@ const SESSIONS_DIR := "D:/Work/FunAI/runtime/sessions"
 const USAGE_FILE := "D:/Work/FunAI/runtime/usage.json"
 const TILED_DIR := "D:/Work/FunAI/assets/tiled/"
 
-# 右側使用量數據面板
+# 右側使用量數據面板（遊戲化呈現：負荷量表 + LV + 產出/閱讀/回合）
 const PANEL_W := 250            # 面板寬（視窗在地圖右側多出這麼寬）
-const CONTEXT_MAX := 200000.0   # context 進度條的分母（超過就滿格、另顯真實數字）
+const CONTEXT_MAX := 200000.0   # 負荷量表的分母（context 上限；超過=超出負荷）
 const USAGE_REFRESH := 1.0      # 面板多久刷新一次（秒）
+# 負荷比例 → 遊戲字眼（由低到高，取第一個達標的）
+const LOAD_WORDS := [
+	[0.30, "游刃有餘", Color(0.55, 0.85, 0.60)],
+	[0.55, "漸入佳境", Color(0.70, 0.85, 0.55)],
+	[0.75, "全神貫注", Color(0.95, 0.85, 0.45)],
+	[0.90, "火力全開", Color(1.00, 0.65, 0.35)],
+	[1.00, "瀕臨極限", Color(1.00, 0.45, 0.35)],
+]
+const LOAD_OVER := ["⚠ 工作量超出負荷", Color(1.0, 0.35, 0.30)]
 
 # 時間衰減（秒）：沒有「中斷」hook，靠 ts 變舊自我修正
 const DONE_DECAY := 5.0       # done 顯示一下就回 idle
@@ -631,7 +640,7 @@ func _build_usage_panel() -> void:
 	outer.add_theme_constant_override("separation", 10)
 	panel.add_child(outer)
 	var title := Label.new()
-	title.text = "📊 使用量"
+	title.text = "⚒ 工作看板"
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
 	outer.add_child(title)
@@ -671,28 +680,28 @@ func _refresh_usage() -> void:
 			t_turns += int(u.get("turns", 0))
 	if shown == 0:
 		var empty := Label.new()
-		empty.text = "等待 session…"
+		empty.text = "辦公室空無一人…"
 		empty.add_theme_font_size_override("font_size", 12)
 		empty.add_theme_color_override("font_color", Color(0.55, 0.58, 0.66))
 		_usage_box.add_child(empty)
 		return
-	# 合計列
+	# 全公司合計列
 	var sep := HSeparator.new()
 	_usage_box.add_child(sep)
 	var tot := VBoxContainer.new()
 	tot.add_theme_constant_override("separation", 1)
 	var h := Label.new()
-	h.text = "合計 · %d session" % shown
+	h.text = "🏢 全公司 · %d 人上工" % shown
 	h.add_theme_font_size_override("font_size", 12)
 	h.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
 	tot.add_child(h)
 	var l := Label.new()
-	l.text = "in %s  out %s" % [_fmt_tok(t_in), _fmt_tok(t_out)]
+	l.text = "⚒ 產出 %s   📖 閱讀 %s" % [_fmt_tok(t_out), _fmt_tok(t_in + t_cache)]
 	l.add_theme_font_size_override("font_size", 12)
 	l.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
 	tot.add_child(l)
 	var l2 := Label.new()
-	l2.text = "cache %s  ·  %d 回合" % [_fmt_tok(t_cache), t_turns]
+	l2.text = "🔁 共 %d 回合" % t_turns
 	l2.add_theme_font_size_override("font_size", 12)
 	l2.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
 	tot.add_child(l2)
@@ -737,32 +746,36 @@ func _usage_card(sid: String, project: String, col: Color, u) -> Control:
 	name.clip_text = true
 	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(name)
+	if u != null:
+		# LV 徽章：依產出量成長（sqrt 曲線，前期升得快後期慢）
+		var lv := 1 + int(sqrt(float(int(u.get("out", 0))) / 10000.0))
+		var lvl := Label.new()
+		lvl.text = "LV %d" % lv
+		lvl.add_theme_font_size_override("font_size", 11)
+		lvl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
+		hb.add_child(lvl)
 	vb.add_child(hb)
 	if u == null:
 		var dash := Label.new()
-		dash.text = "—"
+		dash.text = "統計中…"
 		dash.add_theme_font_size_override("font_size", 12)
 		dash.add_theme_color_override("font_color", Color(0.5, 0.53, 0.6))
 		vb.add_child(dash)
 		return card
-	# tokens：in / out
-	var toks := Label.new()
-	toks.text = "in %s   out %s" % [_fmt_tok(int(u.get("in", 0))), _fmt_tok(int(u.get("out", 0)))]
-	toks.add_theme_font_size_override("font_size", 12)
-	toks.add_theme_color_override("font_color", Color(0.68, 0.72, 0.8))
-	vb.add_child(toks)
-	# cache + 回合
-	var meta := Label.new()
-	meta.text = "cache %s   ·   %d 回合" % [_fmt_tok(int(u.get("cache", 0))), int(u.get("turns", 0))]
-	meta.add_theme_font_size_override("font_size", 11)
-	meta.add_theme_color_override("font_color", Color(0.55, 0.58, 0.66))
-	vb.add_child(meta)
-	# context 佔用條
+	# 負荷量表（context 佔用 → 遊戲字眼）
 	var ctx := int(u.get("context_now", 0))
+	var frac: float = float(ctx) / CONTEXT_MAX
+	var word: String = LOAD_OVER[0]
+	var wcol: Color = LOAD_OVER[1]
+	for lw in LOAD_WORDS:
+		if frac < float(lw[0]):
+			word = lw[1]
+			wcol = lw[2]
+			break
 	var clab := Label.new()
-	clab.text = "context %s / %s" % [_fmt_tok(ctx), _fmt_tok(int(CONTEXT_MAX))]
+	clab.text = "負荷 %d%%  ·  %s" % [int(frac * 100.0), word]
 	clab.add_theme_font_size_override("font_size", 11)
-	clab.add_theme_color_override("font_color", Color(0.6, 0.64, 0.72))
+	clab.add_theme_color_override("font_color", wcol)
 	vb.add_child(clab)
 	var pb := ProgressBar.new()
 	pb.max_value = CONTEXT_MAX
@@ -773,13 +786,22 @@ func _usage_card(sid: String, project: String, col: Color, u) -> Control:
 	bg.bg_color = Color(0.08, 0.09, 0.12, 1.0)
 	bg.set_corner_radius_all(4)
 	var fill := StyleBoxFlat.new()
-	# context 越滿越偏紅，提醒快爆
-	var frac: float = clamp(float(ctx) / CONTEXT_MAX, 0.0, 1.0)
-	fill.bg_color = Color(0.35, 0.7, 0.45).lerp(Color(0.9, 0.4, 0.35), frac)
+	# 負荷越高越偏紅
+	fill.bg_color = Color(0.35, 0.7, 0.45).lerp(Color(0.9, 0.4, 0.35), clamp(frac, 0.0, 1.0))
 	fill.set_corner_radius_all(4)
 	pb.add_theme_stylebox_override("background", bg)
 	pb.add_theme_stylebox_override("fill", fill)
 	vb.add_child(pb)
+	# 戰績：產出（out）/ 閱讀（in+cache）/ 回合
+	var stats := Label.new()
+	stats.text = "⚒ %s   📖 %s   🔁 %d" % [
+		_fmt_tok(int(u.get("out", 0))),
+		_fmt_tok(int(u.get("in", 0)) + int(u.get("cache", 0))),
+		int(u.get("turns", 0)),
+	]
+	stats.add_theme_font_size_override("font_size", 12)
+	stats.add_theme_color_override("font_color", Color(0.68, 0.72, 0.8))
+	vb.add_child(stats)
 	return card
 
 func _fmt_tok(n: int) -> String:

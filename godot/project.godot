@@ -9,6 +9,12 @@ config/name="FunAI Robot Map"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.6")
 
+[accessibility]
+
+; AccessKit 在非內嵌子視窗(detail Window)聚焦時會炸 "Parameter wd is null"
+; 桌面疊層不需要螢幕報讀 → 直接停用（0=自動 1=永遠 2=停用）
+general/accessibility_support=2
+
 [display]
 
 window/size/viewport_width=640

@@ -12,10 +12,13 @@ const SESSIONS_DIR := "D:/Work/FunAI/runtime/sessions"
 const USAGE_FILE := "D:/Work/FunAI/runtime/usage.json"
 const TILED_DIR := "D:/Work/FunAI/assets/tiled/"
 
-# 右側使用量數據面板（遊戲化呈現：負荷量表 + LV + 產出/閱讀/回合）
-const PANEL_W := 250            # 面板寬（視窗在地圖右側多出這麼寬）
+# 工作看板（獨立視窗，遊戲化呈現：負荷量表 + LV + 產出/閱讀/回合 + 人才庫）
+const USAGE_W := 260            # 看板視窗寬
+const USAGE_MIN_H := 220        # 看板最小高（拉高把手的下限）
 const CONTEXT_MAX := 200000.0   # 負荷量表的分母（context 上限；超過=超出負荷）
-const USAGE_REFRESH := 1.0      # 面板多久刷新一次（秒）
+const USAGE_REFRESH := 1.0      # 看板多久刷新一次（秒）
+const DEPARTED_FILE := "D:/Work/FunAI/runtime/departed.json"
+const DEPARTED_MAX := 8         # 人才庫（離職名單）最多記幾筆
 # 負荷比例 → 遊戲字眼（由低到高，取第一個達標的）
 const LOAD_WORDS := [
 	[0.30, "游刃有餘", Color(0.55, 0.85, 0.60)],
@@ -96,8 +99,13 @@ var _detail_t := 0.0          # 刷新計時
 var _detail_dragging := false
 var _detail_drag_off := Vector2i()
 var _file_dialog: FileDialog   # 點空椅 → 選資料夾 → 開新 PowerShell+claude
-var _usage_box: VBoxContainer  # 右側數據面板的卡片容器（每次刷新重建內容）
-var _usage_t := 0.0            # 數據面板刷新計時
+var _usage_win: Window         # 工作看板（獨立 OS 視窗：可分開釘選/拖曳/拉高）
+var _usage_box: VBoxContainer  # 看板的卡片容器（每次刷新重建內容）
+var _usage_t := 0.0            # 看板刷新計時
+var _usage_dragging := false
+var _usage_drag_off := Vector2i()
+var _usage_resizing := false   # 拖底部把手調整高度中
+var _departed: Array = []      # 人才庫：離職 session [{project, cwd}]，可重新雇用
 
 func _input(event: InputEvent) -> void:
 	# 左鍵：點機器人→顯示進度氣泡；點空白→拖曳整個視窗
@@ -140,6 +148,7 @@ func _focus_selected_terminal() -> void:
 	var hw := int(_robots[_selected].get("hwnd", 0))
 	if hw != 0:
 		OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw)])
+	_on_detail_close()   # 叫出終端後對話卡就功成身退，自動關閉
 
 func _build_file_dialog() -> void:
 	_file_dialog = FileDialog.new()
@@ -199,7 +208,8 @@ func _ready() -> void:
 		_draw_grid()
 		return
 	_make_player()
-	_build_usage_panel()
+	_load_departed()
+	_build_usage_window()
 	_make_pin_button()
 	_build_file_dialog()
 	_scan()   # 立即掃一次
@@ -214,6 +224,8 @@ func _process(delta: float) -> void:
 		_shot_t += delta
 		if _shot_t > 1.0:
 			get_viewport().get_texture().get_image().save_png("D:/Work/FunAI/runtime/_shot.png")
+			if _usage_win != null and _usage_win.visible:   # 看板是獨立視窗，另存一張
+				_usage_win.get_texture().get_image().save_png("D:/Work/FunAI/runtime/_shot_board.png")
 			get_tree().quit()
 			return
 	# 行為（移動）+ 動畫
@@ -234,8 +246,20 @@ func _process(delta: float) -> void:
 			_refresh_detail()
 	elif _detail_win.visible and (_selected == "" or not _robots.has(_selected)):
 		_detail_win.hide()
-	# 右側數據面板：定期刷新（讀 usage.json）
-	if not _debug_mode and _usage_box != null:
+	# 工作看板：拖曳 / 拉高 / 定期刷新（讀 usage.json）
+	if _usage_dragging:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			_usage_win.position = DisplayServer.mouse_get_position() - _usage_drag_off
+		else:
+			_usage_dragging = false
+	if _usage_resizing:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			var maxh := DisplayServer.screen_get_size(_usage_win.current_screen).y
+			var h := DisplayServer.mouse_get_position().y - _usage_win.position.y + 10
+			_usage_win.size = Vector2i(USAGE_W, clampi(h, USAGE_MIN_H, maxh))
+		else:
+			_usage_resizing = false
+	if not _debug_mode and _usage_box != null and _usage_win.visible:
 		_usage_t -= delta
 		if _usage_t <= 0.0:
 			_usage_t = USAGE_REFRESH
@@ -515,9 +539,10 @@ func _scan() -> void:
 					_upsert(data)
 			fname = dir.get_next()
 		dir.list_dir_end()
-	# 移除已離場（檔案消失）的角色
+	# 移除已離場（檔案消失）的角色 → 記入人才庫供重新雇用
 	for sid in _robots.keys():
 		if not seen.has(sid):
+			_record_departed(_robots[sid])
 			_robots[sid].node.queue_free()
 			_robots.erase(sid)
 
@@ -531,9 +556,10 @@ func _upsert(data: Dictionary) -> void:
 	var t_age := 1.0e9
 	if tp != "" and FileAccess.file_exists(tp):
 		t_age = now - float(FileAccess.get_modified_time(tp))
-	# 殭屍：transcript 很久沒動、事件也舊 → session 已死，移除機器人
+	# 殭屍：transcript 很久沒動、事件也舊 → session 已死，移除機器人（記入人才庫）
 	if t_age > ZOMBIE_SEC and age > ZOMBIE_SEC:
 		if _robots.has(sid):
+			_record_departed(_robots[sid])
 			_robots[sid].node.queue_free()
 			_robots.erase(sid)
 		return
@@ -595,6 +621,7 @@ func _upsert(data: Dictionary) -> void:
 	r.transcript = str(data.get("transcript", ""))
 	r.cwd = str(data.get("cwd", ""))
 	r.hwnd = int(data.get("hwnd", 0))
+	_unrecord_departed(r.cwd)   # 回來上班了 → 從人才庫移除
 	r.label.text = project
 	r.label.add_theme_color_override("font_color", STATE_COLOR.get(state, Color.WHITE))
 	r.label.add_theme_stylebox_override("normal", _name_bg())
@@ -609,50 +636,125 @@ func _make_pin_button() -> void:
 	var b := Button.new()
 	b.text = "釘選"
 	b.toggle_mode = true
-	b.tooltip_text = "釘選：永遠置頂（再按取消）"
+	b.tooltip_text = "釘選：地圖永遠置頂（再按取消）"
 	b.focus_mode = Control.FOCUS_NONE
 	b.size = Vector2(48, 26)
 	b.position = Vector2(get_window().size.x - 52, 4)
 	b.add_theme_font_size_override("font_size", 13)
 	b.toggled.connect(_on_pin_toggled)
 	cl.add_child(b)
+	# 看板開關（看板被關掉後從這裡叫回來）
+	var ub := Button.new()
+	ub.text = "看板"
+	ub.tooltip_text = "顯示/隱藏工作看板"
+	ub.focus_mode = Control.FOCUS_NONE
+	ub.size = Vector2(48, 26)
+	ub.position = Vector2(get_window().size.x - 104, 4)
+	ub.add_theme_font_size_override("font_size", 13)
+	ub.pressed.connect(_toggle_usage_win)
+	cl.add_child(ub)
+
+func _toggle_usage_win() -> void:
+	if _usage_win.visible:
+		_usage_win.hide()
+	else:
+		# 重新打開時拉回地圖右側（避免飄到看不到的地方）
+		_usage_win.position = get_window().position + Vector2i(get_window().size.x + 8, 0)
+		_usage_win.show()
+		_refresh_usage()
 
 func _on_pin_toggled(on: bool) -> void:
 	get_window().always_on_top = on
 
-# ── 右側使用量數據面板 ──────────────────────────────────────────
-func _build_usage_panel() -> void:
-	var cl := CanvasLayer.new()
-	add_child(cl)
-	var win := get_window().size
-	var panel := PanelContainer.new()
-	panel.position = Vector2(win.x - PANEL_W, 0)
-	panel.size = Vector2(PANEL_W, win.y)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.10, 0.11, 0.15, 0.92)
-	sb.border_width_left = 1
-	sb.border_color = Color(0.26, 0.30, 0.42, 1.0)
-	sb.set_content_margin_all(10)
-	sb.content_margin_top = 34          # 讓出右上角的「釘選」鈕
-	panel.add_theme_stylebox_override("panel", sb)
-	cl.add_child(panel)
-	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 10)
-	panel.add_child(outer)
+# ── 工作看板（獨立視窗：分開釘選、拖曳、拉高、透明背景）──────────
+func _build_usage_window() -> void:
+	_usage_win = Window.new()
+	_usage_win.title = "FunAI 工作看板"
+	_usage_win.size = Vector2i(USAGE_W, 380)
+	_usage_win.borderless = true       # 無邊框，把手/按鈕都自己畫
+	_usage_win.unresizable = true      # OS 縮放關掉，改用底部把手拉高
+	_usage_win.transparent_bg = true   # 卡片外全透明
+	_usage_win.always_on_top = false
+	add_child(_usage_win)
+	_usage_win.set_flag(Window.FLAG_TRANSPARENT, true)
+	_usage_win.close_requested.connect(func(): _usage_win.hide())
+	var outer := MarginContainer.new()
+	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for m in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		outer.add_theme_constant_override(m, 6)
+	_usage_win.add_child(outer)
+	# 半透明圓角卡片
+	var card := PanelContainer.new()
+	var csb := StyleBoxFlat.new()
+	csb.bg_color = Color(0.10, 0.11, 0.15, 0.86)
+	csb.set_corner_radius_all(14)
+	csb.set_border_width_all(1)
+	csb.border_color = Color(0.26, 0.30, 0.42, 0.9)
+	csb.set_content_margin_all(12)
+	card.add_theme_stylebox_override("panel", csb)
+	outer.add_child(card)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	card.add_child(vbox)
+	# 標題列：標題（拖曳）+ 釘選 + 關閉
+	var headrow := HBoxContainer.new()
+	headrow.add_theme_constant_override("separation", 6)
+	vbox.add_child(headrow)
 	var title := Label.new()
 	title.text = "⚒ 工作看板"
-	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_font_size_override("font_size", 15)
 	title.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
-	outer.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.mouse_filter = Control.MOUSE_FILTER_STOP
+	title.mouse_default_cursor_shape = Control.CURSOR_MOVE
+	title.gui_input.connect(_on_usage_header_drag)
+	headrow.add_child(title)
+	var pin := Button.new()
+	pin.text = "📌"
+	pin.toggle_mode = true
+	pin.tooltip_text = "釘選看板：永遠置頂（與地圖分開）"
+	pin.focus_mode = Control.FOCUS_NONE
+	pin.add_theme_font_size_override("font_size", 12)
+	pin.toggled.connect(func(on): _usage_win.always_on_top = on)
+	headrow.add_child(pin)
+	var xbtn := Button.new()
+	xbtn.text = "✕"
+	xbtn.focus_mode = Control.FOCUS_NONE
+	xbtn.add_theme_font_size_override("font_size", 12)
+	xbtn.pressed.connect(func(): _usage_win.hide())
+	headrow.add_child(xbtn)
+	# 內容捲動（拉高視窗 = 一次看到更多卡片）
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	outer.add_child(scroll)
+	vbox.add_child(scroll)
 	_usage_box = VBoxContainer.new()
 	_usage_box.add_theme_constant_override("separation", 8)
 	_usage_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_usage_box)
+	# 底部拉高把手
+	var grip := Label.new()
+	grip.text = "··· 拖此調整高度 ···"
+	grip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	grip.add_theme_font_size_override("font_size", 10)
+	grip.add_theme_color_override("font_color", Color(0.5, 0.55, 0.65))
+	grip.mouse_filter = Control.MOUSE_FILTER_STOP
+	grip.mouse_default_cursor_shape = Control.CURSOR_VSIZE
+	grip.gui_input.connect(_on_usage_grip)
+	vbox.add_child(grip)
+	# 預設開在地圖右側
+	_usage_win.position = get_window().position + Vector2i(get_window().size.x + 8, 0)
+	_usage_win.visible = true
+
+func _on_usage_header_drag(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		_usage_dragging = true
+		_usage_drag_off = DisplayServer.mouse_get_position() - _usage_win.position
+
+func _on_usage_grip(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		_usage_resizing = true
 
 func _refresh_usage() -> void:
 	if _usage_box == null:
@@ -684,28 +786,37 @@ func _refresh_usage() -> void:
 		empty.add_theme_font_size_override("font_size", 12)
 		empty.add_theme_color_override("font_color", Color(0.55, 0.58, 0.66))
 		_usage_box.add_child(empty)
-		return
-	# 全公司合計列
-	var sep := HSeparator.new()
-	_usage_box.add_child(sep)
-	var tot := VBoxContainer.new()
-	tot.add_theme_constant_override("separation", 1)
-	var h := Label.new()
-	h.text = "🏢 全公司 · %d 人上工" % shown
-	h.add_theme_font_size_override("font_size", 12)
-	h.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
-	tot.add_child(h)
-	var l := Label.new()
-	l.text = "⚒ 產出 %s   📖 閱讀 %s" % [_fmt_tok(t_out), _fmt_tok(t_in + t_cache)]
-	l.add_theme_font_size_override("font_size", 12)
-	l.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
-	tot.add_child(l)
-	var l2 := Label.new()
-	l2.text = "🔁 共 %d 回合" % t_turns
-	l2.add_theme_font_size_override("font_size", 12)
-	l2.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
-	tot.add_child(l2)
-	_usage_box.add_child(tot)
+	else:
+		# 全公司合計列
+		_usage_box.add_child(HSeparator.new())
+		var tot := VBoxContainer.new()
+		tot.add_theme_constant_override("separation", 1)
+		var h := Label.new()
+		h.text = "🏢 全公司 · %d 人上工" % shown
+		h.add_theme_font_size_override("font_size", 12)
+		h.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
+		tot.add_child(h)
+		var l := Label.new()
+		l.text = "⚒ 產出 %s   📖 閱讀 %s" % [_fmt_tok(t_out), _fmt_tok(t_in + t_cache)]
+		l.add_theme_font_size_override("font_size", 12)
+		l.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
+		tot.add_child(l)
+		var l2 := Label.new()
+		l2.text = "🔁 共 %d 回合" % t_turns
+		l2.add_theme_font_size_override("font_size", 12)
+		l2.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
+		tot.add_child(l2)
+		_usage_box.add_child(tot)
+	# 人才庫：離職的 session，一鍵重新雇用（claude -c 接續上次對話）
+	if _departed.size() > 0:
+		_usage_box.add_child(HSeparator.new())
+		var dh := Label.new()
+		dh.text = "📋 人才庫 · 點擊重新雇用"
+		dh.add_theme_font_size_override("font_size", 12)
+		dh.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
+		_usage_box.add_child(dh)
+		for d in _departed:
+			_usage_box.add_child(_rehire_row(d))
 
 func _on_usage_card_input(event: InputEvent, sid: String) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -811,6 +922,73 @@ func _fmt_tok(n: int) -> String:
 		return "%.1fk" % (n / 1000.0)
 	return str(n)
 
+# ── 人才庫（離職名單 + 重新雇用）────────────────────────────────
+func _rehire_row(d: Dictionary) -> Control:
+	var btn := Button.new()
+	btn.text = "↻ %s" % str(d.get("project", "?"))
+	btn.tooltip_text = "重新雇用：在 %s 開新終端、接續上次對話 (claude -c)" % str(d.get("cwd", ""))
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	btn.add_theme_font_size_override("font_size", 12)
+	var nsb := StyleBoxFlat.new()
+	nsb.bg_color = Color(0.16, 0.22, 0.30, 1.0)
+	nsb.set_corner_radius_all(7)
+	nsb.set_content_margin_all(7)
+	var hsb := nsb.duplicate()
+	hsb.bg_color = Color(0.22, 0.32, 0.44, 1.0)
+	btn.add_theme_stylebox_override("normal", nsb)
+	btn.add_theme_stylebox_override("hover", hsb)
+	btn.add_theme_stylebox_override("pressed", nsb)
+	btn.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
+	var cwd := str(d.get("cwd", ""))
+	btn.pressed.connect(func(): _rehire(cwd))
+	return btn
+
+func _rehire(cwd: String) -> void:
+	# 重新雇用 = 在原資料夾開新 PowerShell、claude -c 接續上次對話
+	if cwd == "":
+		return
+	OS.create_process("cmd.exe", ["/c", "D:\\Work\\FunAI\\app\\launch_claude.cmd", cwd, "-c"])
+
+func _record_departed(r) -> void:
+	# 機器人離場（SessionEnd / 殭屍）→ 記入人才庫；同資料夾只留最新一筆
+	var cwd := str(r.get("cwd", ""))
+	if cwd == "":
+		return
+	for i in range(_departed.size()):
+		if str(_departed[i].get("cwd", "")) == cwd:
+			_departed.remove_at(i)
+			break
+	_departed.insert(0, {"project": str(r.get("project", "?")), "cwd": cwd})
+	while _departed.size() > DEPARTED_MAX:
+		_departed.pop_back()
+	_save_departed()
+
+func _unrecord_departed(cwd: String) -> void:
+	# 同資料夾的 session 回來上班了 → 從人才庫移除
+	if cwd == "":
+		return
+	for i in range(_departed.size()):
+		if str(_departed[i].get("cwd", "")) == cwd:
+			_departed.remove_at(i)
+			_save_departed()
+			return
+
+func _save_departed() -> void:
+	var f := FileAccess.open(DEPARTED_FILE, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(_departed))
+		f.close()
+
+func _load_departed() -> void:
+	var f := FileAccess.open(DEPARTED_FILE, FileAccess.READ)
+	if f == null:
+		return
+	var j = JSON.parse_string(f.get_as_text())
+	f.close()
+	if j is Array:
+		_departed = j
+
 func _make_player() -> void:
 	var node := Node2D.new()
 	var spr := Sprite2D.new()
@@ -907,8 +1085,7 @@ func _load_map() -> void:
 	var tw := int(m["tilewidth"])
 	_map_w = int(m["width"])
 	_map_h = int(m["height"])
-	# 視窗寬 = 地圖寬 + 右側數據面板寬（地圖照舊畫在左側 0 起）
-	get_window().size = Vector2i(int(_map_w * tw * SCALE) + PANEL_W, int(_map_h * tw * SCALE))
+	get_window().size = Vector2i(int(_map_w * tw * SCALE), int(_map_h * tw * SCALE))
 	# 載入 tileset 紋理
 	var tsets := []
 	for ts in m["tilesets"]:

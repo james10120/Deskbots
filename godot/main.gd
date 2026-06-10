@@ -90,9 +90,12 @@ func _ready() -> void:
 	w.borderless = true
 	w.always_on_top = true
 	_shot = OS.get_cmdline_args().has("--shot")
-	for i in range(1, 10):   # 載入 BOT1~BOT9
+	for i in range(1, 10):   # 載入 BOT1~BOT9（缺檔就略過）
 		var nm := "BOT%d" % i
-		var img := Image.load_from_file("D:/Work/FunAI/assets/characters/%s.png" % nm)
+		var p := "D:/Work/FunAI/assets/characters/%s.png" % nm
+		if not FileAccess.file_exists(p):
+			continue
+		var img := Image.load_from_file(p)
 		if img != null:
 			_bot_tex[nm] = ImageTexture.create_from_image(img)
 	if OS.get_cmdline_args().has("--bot"):
@@ -195,6 +198,13 @@ func _update_robot(r, delta: float) -> void:
 	var frame := int(r.anim_t / FRAME_DUR) % frames
 	var col: int = (int(r.dir) * 6 + frame) if dir_based else frame
 	r.sprite.region_rect = Rect2(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+	# 4) 等你授權 → 頭上跳動的 ! 警示
+	if r.state == "waiting":
+		r.alert.visible = true
+		var bounce: float = abs(sin(r.anim_t * 7.0)) * 5.0
+		r.alert.position = Vector2(-4, -FRAME_H * SCALE * 0.5 - 30 - bounce)
+	else:
+		r.alert.visible = false
 
 func _scan() -> void:
 	var seen := {}
@@ -255,7 +265,7 @@ func _upsert(data: Dictionary) -> void:
 		add_child(node)
 		node.position = seat
 		r = {
-			"node": node, "sprite": spr, "label": lbl, "anim_t": 0.0,
+			"node": node, "sprite": spr, "label": lbl, "alert": _make_alert(node), "anim_t": 0.0,
 			"pos": seat, "target": seat, "home": seat,
 			"moving": false, "dir": 3, "wander_t": 0.0,
 			"resting_now": false, "home_facing": seat_face, "seat_idx": si,
@@ -282,6 +292,23 @@ func _name_bg() -> StyleBoxFlat:
 	sb.set_content_margin_all(2)
 	sb.set_corner_radius_all(2)
 	return sb
+
+func _make_alert(node: Node2D) -> Label:
+	# 等你授權時頭上跳動的黃底紅 ! 警示
+	var a := Label.new()
+	a.text = "!"
+	a.add_theme_font_size_override("font_size", 14)
+	a.add_theme_color_override("font_color", Color(0.85, 0.1, 0.1))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1.0, 0.9, 0.2, 0.95)
+	sb.set_content_margin_all(3)
+	sb.set_corner_radius_all(4)
+	a.add_theme_stylebox_override("normal", sb)
+	a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	a.z_index = 4001
+	a.visible = false
+	node.add_child(a)
+	return a
 
 func _tile_px(col: float, row: float) -> Vector2:
 	# 格座標 → 螢幕像素（格中心，已含 4x 縮放）

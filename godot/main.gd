@@ -152,7 +152,7 @@ func _focus_selected_terminal() -> void:
 		_flash_hint()
 		return
 	OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw)])
-	_on_detail_close()   # 叫出終端後對話卡就功成身退，自動關閉
+	# 不自動關對話卡：叫出終端後通常還要繼續送訊息／下指令
 
 func _flash_hint() -> void:
 	if _detail_hint != null:

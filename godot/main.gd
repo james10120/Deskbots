@@ -95,7 +95,7 @@ var _selected := ""           # 被點選顯示進度的 session
 var _detail_win: Window       # 大型進度視窗（獨立 OS 視窗）
 var _detail_text: RichTextLabel
 var _detail_header: Label
-var _detail_input: LineEdit   # 送訊息/指令給該 session 的輸入框
+var _detail_input: TextEdit   # 送訊息/指令給該 session 的輸入框（多行、自動換行）
 var _detail_hint: Label       # hwnd 缺失時的提示
 var _detail_t := 0.0          # 刷新計時
 var _detail_dragging := false
@@ -172,7 +172,14 @@ func _send_detail_input() -> void:
 	if t == "":
 		return
 	_send_to_selected(t)
-	_detail_input.clear()
+	_detail_input.text = ""
+
+func _on_detail_input_gui(event: InputEvent) -> void:
+	# Enter 送出；Shift+Enter 換行（交給 TextEdit 預設行為插入換行）
+	if event is InputEventKey and event.pressed and not event.shift_pressed:
+		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+			_detail_input.accept_event()   # 吃掉這個 Enter，不要插入換行
+			_send_detail_input()
 
 func _send_to_selected(text: String) -> void:
 	# 聚焦該 session 的終端 → 鍵盤注入文字 + Enter（送訊息或 /clear 等斜線指令）
@@ -374,15 +381,19 @@ func _build_detail_window() -> void:
 	var inrow := HBoxContainer.new()
 	inrow.add_theme_constant_override("separation", 8)
 	vbox.add_child(inrow)
-	_detail_input = LineEdit.new()
-	_detail_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出）"
+	_detail_input = TextEdit.new()
+	_detail_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）"
 	_detail_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_detail_input.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY   # 超出寬度自動換行，不再被截掉
+	_detail_input.scroll_fit_content_height = true             # 隨內容長高（多行也看得到）
+	_detail_input.custom_minimum_size = Vector2(0, 34)         # 起始約一行高
 	_detail_input.add_theme_font_size_override("font_size", 14)
-	_detail_input.text_submitted.connect(func(_t): _send_detail_input())
+	_detail_input.gui_input.connect(_on_detail_input_gui)      # Enter 送出 / Shift+Enter 換行
 	inrow.add_child(_detail_input)
 	var sbtn := Button.new()
 	sbtn.text = "送出"
 	sbtn.focus_mode = Control.FOCUS_NONE
+	sbtn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN   # 輸入框長高時，送出鈕仍貼齊頂部
 	sbtn.add_theme_font_size_override("font_size", 14)
 	sbtn.add_theme_stylebox_override("normal", _btn_style(Color(0.20, 0.44, 0.34)))
 	sbtn.add_theme_stylebox_override("hover", _btn_style(Color(0.26, 0.54, 0.42)))
@@ -465,7 +476,7 @@ func _refresh_detail() -> void:
 		_detail_hint.text = "⚠ 抓不到這個 session 的終端視窗（可能在 VS Code 整合終端或無視窗環境啟動）。用啟動器開的獨立 PowerShell 視窗才能送指令／呼叫終端。"
 	if _detail_input != null:
 		_detail_input.editable = has_win
-		_detail_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出）" if has_win else "此 session 無可用終端視窗"
+		_detail_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）" if has_win else "此 session 無可用終端視窗"
 
 func _transcript_log(path: String) -> String:
 	# 讀 transcript 尾端（位元組對齊換行，避免 Unicode/NUL 警告），組出最近對話/工具

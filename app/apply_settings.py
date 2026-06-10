@@ -16,8 +16,8 @@ SETTINGS = Path.home() / ".claude" / "settings.json"
 EMIT = "py D:/Work/FunAI/app/emit.py"
 STATUSLINE = "py D:/Work/FunAI/app/statusline.py"
 
-# 輕量版：只掛低頻事件，零感知延遲
-EVENTS = ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"]
+# PreToolUse 讓「用工具的回合」狀態完全準（emit.py 對它走精簡路徑，每次 ~37ms）
+EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd"]
 
 
 def main() -> None:

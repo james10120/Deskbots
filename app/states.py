@@ -83,10 +83,36 @@ STATE_ANIM = {
 # 可用角色（BOT1~BOT9）—— 依 session 雜湊分配，固定不變
 CHARACTERS = [f"BOT{i}" for i in range(1, 10)]
 
-# done 狀態維持多久後視為 idle（秒）；Godot/statusline 端依時間衰減
-DONE_DECAY_SEC = 8
-# 多久沒更新就視為 idle（秒）
-IDLE_AFTER_SEC = 90
+# 時間衰減門檻（秒）—— 與 Godot 端一致，主要靠 transcript 改動時間判定活躍
+DONE_DECAY_SEC = 8        # done 顯示一下就回 idle
+ACTIVE_FRESH_SEC = 6      # transcript 這秒數內有更新 → 正在輸出 = working
+ACTIVE_IDLE_SEC = 120     # thinking/working 沒在輸出超過這秒數 → idle（容忍長回合）
+ACTIVE_DECAY_SEC = 180    # 沒 transcript 路徑時的安全網
+WAIT_DECAY_SEC = 180      # waiting 太久沒動作 → idle，避免卡死
+
+
+def decay_state(d: dict, now: float) -> str:
+    """依事件狀態 + transcript 改動時間，算出當下實際狀態（Godot 與 statusline 共用邏輯）。"""
+    state = d.get("state", IDLE)
+    age = now - d.get("ts", now)
+    tp = d.get("transcript", "")
+    t_age = 1.0e9
+    if tp:
+        try:
+            t_age = now - os.path.getmtime(tp)
+        except OSError:
+            pass
+    has_tx = t_age < 1.0e8
+    ref = t_age if has_tx else age          # 沒 transcript 路徑時退而用事件 age
+    if t_age < ACTIVE_FRESH_SEC:
+        return WORKING                      # 正在輸出 = 工作中
+    if state == DONE:
+        return IDLE if age > DONE_DECAY_SEC else DONE
+    if state == WAITING:
+        return IDLE if ref > WAIT_DECAY_SEC else WAITING
+    if state in (THINKING, WORKING):
+        return IDLE if (ref > ACTIVE_IDLE_SEC or age > ACTIVE_DECAY_SEC) else state
+    return state
 
 
 def character_for(session_id: str) -> str:
@@ -119,6 +145,14 @@ def write_state(session_id: str, payload: dict) -> None:
     os.replace(tmp, target)
 
 
+def read_state(session_id: str) -> dict | None:
+    """讀單一 session 的現有狀態檔（給 emit.py 重用 hwnd 等欄位）。"""
+    try:
+        return json.loads(session_file(session_id).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def remove_state(session_id: str) -> None:
     """session 結束 → 移除檔案（Godot 端讓機器人離場）。"""
     try:
@@ -138,10 +172,6 @@ def read_all() -> list[dict]:
             d = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        age = now - d.get("ts", now)
-        if d.get("state") == DONE and age > DONE_DECAY_SEC:
-            d["state"] = IDLE
-        elif age > IDLE_AFTER_SEC and d.get("state") not in (WAITING, ERROR):
-            d["state"] = IDLE
+        d["state"] = decay_state(d, now)
         out.append(d)
     return out

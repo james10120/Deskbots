@@ -12,9 +12,12 @@ const SESSIONS_DIR := "D:/Work/FunAI/runtime/sessions"
 const TILED_DIR := "D:/Work/FunAI/assets/tiled/"
 
 # 時間衰減（秒）：沒有「中斷」hook，靠 ts 變舊自我修正
-const DONE_DECAY := 4.0      # done 顯示一下就回 idle
-const ACTIVE_IDLE := 15.0    # thinking/working：transcript 超過這秒數沒更新 → 判定中斷/結束 → idle
-const ACTIVE_DECAY := 120.0  # 安全網：沒有 transcript 路徑時，靠事件 ts 變舊退回 idle
+const DONE_DECAY := 5.0       # done 顯示一下就回 idle
+const ACTIVE_FRESH := 6.0     # transcript 這秒數內有更新 → 正在輸出 = working（主要活躍訊號）
+const ACTIVE_IDLE := 120.0    # 沒在輸出超過這秒數 → 回 idle（容忍長回合/長工具空檔）
+const ACTIVE_DECAY := 180.0   # 安全網：沒 transcript 路徑時靠事件 ts 退回 idle
+const WAIT_DECAY := 180.0     # waiting 超過這秒數沒動作 → 視為閒置（避免卡死在等待）
+const ZOMBIE_SEC := 1800.0    # transcript 超過這秒數沒動且事件也舊 → 死掉的 session，隱藏
 
 const FRAME_W := 16
 const FRAME_H := 32
@@ -498,15 +501,29 @@ func _upsert(data: Dictionary) -> void:
 	var state: String = str(data.get("state", "idle"))
 	var now := Time.get_unix_time_from_system()
 	var age := now - float(data.get("ts", 0))
-	if state == "done" and age > DONE_DECAY:
-		state = "idle"
+	# transcript 修改時間 = 主要活躍訊號（沒有 PreToolUse 心跳，靠這個修正狀態）
+	var tp := str(data.get("transcript", ""))
+	var t_age := 1.0e9
+	if tp != "" and FileAccess.file_exists(tp):
+		t_age = now - float(FileAccess.get_modified_time(tp))
+	# 殭屍：transcript 很久沒動、事件也舊 → session 已死，移除機器人
+	if t_age > ZOMBIE_SEC and age > ZOMBIE_SEC:
+		if _robots.has(sid):
+			_robots[sid].node.queue_free()
+			_robots.erase(sid)
+		return
+	var has_tx := t_age < 1.0e8
+	var ref := t_age if has_tx else age   # 沒 transcript 路徑時退而用事件 age
+	if t_age < ACTIVE_FRESH:
+		state = "working"                # 正在輸出 = 工作中（覆蓋過時的 waiting/thinking）
+	elif state == "done":
+		if age > DONE_DECAY:
+			state = "idle"
+	elif state == "waiting":
+		if ref > WAIT_DECAY:             # 等太久沒任何動作 → 視為閒置，避免卡死
+			state = "idle"
 	elif state == "thinking" or state == "working":
-		# 心跳：transcript 停止更新代表回合結束（自然完成或被中斷）
-		var tp := str(data.get("transcript", ""))
-		if tp != "" and FileAccess.file_exists(tp):
-			if now - float(FileAccess.get_modified_time(tp)) > ACTIVE_IDLE:
-				state = "idle"
-		elif age > ACTIVE_DECAY:
+		if ref > ACTIVE_IDLE or age > ACTIVE_DECAY:
 			state = "idle"
 	var character: String = str(data.get("character", "Adam"))
 	var project: String = str(data.get("project", "?"))

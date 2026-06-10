@@ -17,10 +17,18 @@ try:
 except Exception:  # 連 import 都失敗也不能炸掉 hook
     sys.exit(0)
 
-try:
-    import winfocus
-except Exception:
-    winfocus = None
+
+def terminal_hwnd(session_id: str) -> int:
+    """重用開場抓到的終端視窗 handle（終端不變）；沒有才動用 winfocus 抓。
+    高頻事件(PreToolUse)走這條 → 不 import winfocus、省 ~20ms。"""
+    prev = states.read_state(session_id)
+    if prev and prev.get("hwnd"):
+        return int(prev["hwnd"])
+    try:
+        import winfocus
+        return winfocus.terminal_hwnd()
+    except Exception:
+        return 0
 
 
 def detect_error(data: dict) -> bool:
@@ -54,8 +62,22 @@ def main() -> None:
     if event == "PostToolUse" and detect_error(data):
         state = states.ERROR
 
+    # Notification 要分清楚：真的「需要授權(blocked)」才算 waiting；
+    # 「Claude is waiting for your input」這種其實是閒置，不該顯示成等待。
+    notif = ""
+    if event == "Notification":
+        notif = str(data.get("message", ""))
+        low = notif.lower()
+        if ("permission" in low or "approve" in low or "confirm" in low
+                or "授權" in notif or "允許" in notif):
+            state = states.WAITING
+        else:
+            state = states.IDLE
+
     # 給人看的進度短句
-    if state == states.WORKING and tool:
+    if event == "Notification" and notif:
+        message = notif[:60]
+    elif state == states.WORKING and tool:
         message = f"{tool}"
     elif state == states.WAITING:
         message = "等你授權/輸入"
@@ -80,7 +102,7 @@ def main() -> None:
         "ts": time.time(),
         "transcript": data.get("transcript_path", ""),  # 地圖端拿它的 mtime 當心跳偵測中斷
         "cwd": (data.get("workspace") or {}).get("project_dir") or data.get("cwd", ""),
-        "hwnd": (winfocus.terminal_hwnd() if winfocus is not None else 0),  # 終端視窗 handle，點機器人聚焦用
+        "hwnd": terminal_hwnd(session_id),  # 終端視窗 handle（重用開場抓的，高頻事件不重抓）
     }
     states.write_state(session_id, payload)
 

@@ -31,8 +31,15 @@ app/statusline.py                       依狀態走位/播動畫、A* 繞牆尋
 
 ## 啟動
 
-雙擊 **`app/start_map.cmd`**（清殭屍 session → 烘焙地圖 → 啟動 Godot）。
-首次需先跑 `app/apply_settings.py`（自己執行）把 hooks + statusLine 併入 `~/.claude/settings.json`，再開新的 Claude Code session。
+**乾淨模式（推薦）**：雙擊 **`app/run_funai.cmd`**。開啟時自動安裝 hooks/statusLine，**關閉地圖後自動還原全域設定、停背景行程、清 runtime**，跑完不在 `~/.claude/settings.json` 留任何痕跡（`try/finally` 保證收尾）。
+→ 要被觀察的 Claude session 請在**開啟 FunAI 之後**才啟動，才會出現機器人。
+→ 萬一 powershell 被強制砍掉（finally 來不及跑），跑一次 `py app/apply_settings.py --remove` 即可手動還原。
+
+**常駐模式**：先跑一次 `py app/apply_settings.py` 把 hooks/statusLine 併入全域設定（idempotent、非破壞性、會備份 `.bak`），之後雙擊 **`app/start_map.cmd`** 只開地圖。要卸載時 `py app/apply_settings.py --remove`（只移除 FunAI 自己的設定並還原你原本的 statusLine）。
+
+## 使用量數據窗
+
+地圖右側面板顯示每個在場 session 的 token 用量（in/out/cache）、回合數、context 佔用條（越滿越偏紅）+ 合計。資料來自 `app/usage_poll.py`（背景常駐，增量解析各 session transcript 寫 `runtime/usage.json`）。點面板上的卡片＝跳到該 session（同點機器人，開對話卡）。
 
 ## 檔案
 
@@ -40,7 +47,9 @@ app/statusline.py                       依狀態走位/播動畫、A* 繞牆尋
 - `app/states.py` — 共用：狀態對照、角色分配(BOT1~9)、session 檔讀寫
 - `app/statusline.py` — statusLine 文字進度
 - `app/bake_map.py` — 把 Tiled `office.tmj` 解壓成 Godot 好讀的 `map_baked.json` + 障礙格
-- `app/clean_sessions.py` / `apply_settings.py` / `start_map.cmd` — 維運/啟動
+- `app/usage_poll.py` — 背景常駐，增量算各 session token 用量 → `runtime/usage.json`
+- `app/clean_sessions.py` / `apply_settings.py`（套用/`--remove` 移除）— 維運
+- `app/run_funai.cmd`(+`.ps1`) — 乾淨生命週期啟動（裝→用→關自動還原）；`start_map.cmd` — 只開地圖
 - `godot/main.gd` — 渲染、行為、尋路、圖層、動畫（座位/圖層調整參數在檔案最上方）
 - `assets/characters/BOT1~9.png` — 角色動畫表（16×32 幀）
 - `assets/tiled/office.tmj` + tileset PNG — Tiled 辦公室地圖

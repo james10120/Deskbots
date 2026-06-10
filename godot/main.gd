@@ -9,7 +9,13 @@ const ROW_WALK := 2    # 第3列：走路（4 向×6）
 const ROW_PHONE := 6   # 第7列：等待滑手機（12 格，正面）
 const ROW_READ := 7    # 第8列：休息看書（12 格，正面）
 const SESSIONS_DIR := "D:/Work/FunAI/runtime/sessions"
+const USAGE_FILE := "D:/Work/FunAI/runtime/usage.json"
 const TILED_DIR := "D:/Work/FunAI/assets/tiled/"
+
+# 右側使用量數據面板
+const PANEL_W := 250            # 面板寬（視窗在地圖右側多出這麼寬）
+const CONTEXT_MAX := 200000.0   # context 進度條的分母（超過就滿格、另顯真實數字）
+const USAGE_REFRESH := 1.0      # 面板多久刷新一次（秒）
 
 # 時間衰減（秒）：沒有「中斷」hook，靠 ts 變舊自我修正
 const DONE_DECAY := 5.0       # done 顯示一下就回 idle
@@ -81,6 +87,8 @@ var _detail_t := 0.0          # 刷新計時
 var _detail_dragging := false
 var _detail_drag_off := Vector2i()
 var _file_dialog: FileDialog   # 點空椅 → 選資料夾 → 開新 PowerShell+claude
+var _usage_box: VBoxContainer  # 右側數據面板的卡片容器（每次刷新重建內容）
+var _usage_t := 0.0            # 數據面板刷新計時
 
 func _input(event: InputEvent) -> void:
 	# 左鍵：點機器人→顯示進度氣泡；點空白→拖曳整個視窗
@@ -182,9 +190,11 @@ func _ready() -> void:
 		_draw_grid()
 		return
 	_make_player()
+	_build_usage_panel()
 	_make_pin_button()
 	_build_file_dialog()
 	_scan()   # 立即掃一次
+	_refresh_usage()
 
 func _process(delta: float) -> void:
 	_poll_t += delta
@@ -215,6 +225,12 @@ func _process(delta: float) -> void:
 			_refresh_detail()
 	elif _detail_win.visible and (_selected == "" or not _robots.has(_selected)):
 		_detail_win.hide()
+	# 右側數據面板：定期刷新（讀 usage.json）
+	if not _debug_mode and _usage_box != null:
+		_usage_t -= delta
+		if _usage_t <= 0.0:
+			_usage_t = USAGE_REFRESH
+			_refresh_usage()
 
 func _build_detail_window() -> void:
 	_detail_win = Window.new()
@@ -595,6 +611,184 @@ func _make_pin_button() -> void:
 func _on_pin_toggled(on: bool) -> void:
 	get_window().always_on_top = on
 
+# ── 右側使用量數據面板 ──────────────────────────────────────────
+func _build_usage_panel() -> void:
+	var cl := CanvasLayer.new()
+	add_child(cl)
+	var win := get_window().size
+	var panel := PanelContainer.new()
+	panel.position = Vector2(win.x - PANEL_W, 0)
+	panel.size = Vector2(PANEL_W, win.y)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.11, 0.15, 0.92)
+	sb.border_width_left = 1
+	sb.border_color = Color(0.26, 0.30, 0.42, 1.0)
+	sb.set_content_margin_all(10)
+	sb.content_margin_top = 34          # 讓出右上角的「釘選」鈕
+	panel.add_theme_stylebox_override("panel", sb)
+	cl.add_child(panel)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 10)
+	panel.add_child(outer)
+	var title := Label.new()
+	title.text = "📊 使用量"
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
+	outer.add_child(title)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(scroll)
+	_usage_box = VBoxContainer.new()
+	_usage_box.add_theme_constant_override("separation", 8)
+	_usage_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_usage_box)
+
+func _refresh_usage() -> void:
+	if _usage_box == null:
+		return
+	var usage = _read_json(USAGE_FILE)
+	if usage == null:
+		usage = {}
+	for c in _usage_box.get_children():
+		c.queue_free()
+	# 依座位序排在場 session，畫面穩定不跳動
+	var sids := _robots.keys()
+	sids.sort_custom(func(a, b): return int(_robots[a].seat_idx) < int(_robots[b].seat_idx))
+	var t_in := 0; var t_out := 0; var t_cache := 0; var t_turns := 0
+	var shown := 0
+	for sid in sids:
+		var r = _robots[sid]
+		var u = usage.get(sid, null)
+		var col: Color = STATE_COLOR.get(str(r.state), Color.WHITE)
+		_usage_box.add_child(_usage_card(str(sid), str(r.project), col, u))
+		shown += 1
+		if u != null:
+			t_in += int(u.get("in", 0))
+			t_out += int(u.get("out", 0))
+			t_cache += int(u.get("cache", 0))
+			t_turns += int(u.get("turns", 0))
+	if shown == 0:
+		var empty := Label.new()
+		empty.text = "等待 session…"
+		empty.add_theme_font_size_override("font_size", 12)
+		empty.add_theme_color_override("font_color", Color(0.55, 0.58, 0.66))
+		_usage_box.add_child(empty)
+		return
+	# 合計列
+	var sep := HSeparator.new()
+	_usage_box.add_child(sep)
+	var tot := VBoxContainer.new()
+	tot.add_theme_constant_override("separation", 1)
+	var h := Label.new()
+	h.text = "合計 · %d session" % shown
+	h.add_theme_font_size_override("font_size", 12)
+	h.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
+	tot.add_child(h)
+	var l := Label.new()
+	l.text = "in %s  out %s" % [_fmt_tok(t_in), _fmt_tok(t_out)]
+	l.add_theme_font_size_override("font_size", 12)
+	l.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
+	tot.add_child(l)
+	var l2 := Label.new()
+	l2.text = "cache %s  ·  %d 回合" % [_fmt_tok(t_cache), t_turns]
+	l2.add_theme_font_size_override("font_size", 12)
+	l2.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
+	tot.add_child(l2)
+	_usage_box.add_child(tot)
+
+func _on_usage_card_input(event: InputEvent, sid: String) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if _robots.has(sid):
+			_on_robot_click(sid)   # 與點機器人一致：開/關該 session 對話卡
+			_refresh_usage()       # 立即更新卡片高亮
+
+func _usage_card(sid: String, project: String, col: Color, u) -> Control:
+	var card := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	# 被點選的 session 卡片高亮邊框，呼應對話框正在看的對象
+	sb.bg_color = Color(0.17, 0.20, 0.28, 1.0) if sid == _selected else Color(0.14, 0.15, 0.20, 1.0)
+	if sid == _selected:
+		sb.set_border_width_all(1)
+		sb.border_color = Color(0.45, 0.6, 0.95, 1.0)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(8)
+	card.add_theme_stylebox_override("panel", sb)
+	# 點卡片 = 跳到對應 session（同點機器人：開/關該 session 的對話卡）
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.gui_input.connect(func(e): _on_usage_card_input(e, sid))
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 3)
+	card.add_child(vb)
+	# 標題列：狀態色點 + 專案名
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	var dot := ColorRect.new()
+	dot.color = col
+	dot.custom_minimum_size = Vector2(9, 9)
+	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(dot)
+	var name := Label.new()
+	name.text = project
+	name.add_theme_font_size_override("font_size", 13)
+	name.add_theme_color_override("font_color", Color(0.92, 0.94, 1.0))
+	name.clip_text = true
+	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(name)
+	vb.add_child(hb)
+	if u == null:
+		var dash := Label.new()
+		dash.text = "—"
+		dash.add_theme_font_size_override("font_size", 12)
+		dash.add_theme_color_override("font_color", Color(0.5, 0.53, 0.6))
+		vb.add_child(dash)
+		return card
+	# tokens：in / out
+	var toks := Label.new()
+	toks.text = "in %s   out %s" % [_fmt_tok(int(u.get("in", 0))), _fmt_tok(int(u.get("out", 0)))]
+	toks.add_theme_font_size_override("font_size", 12)
+	toks.add_theme_color_override("font_color", Color(0.68, 0.72, 0.8))
+	vb.add_child(toks)
+	# cache + 回合
+	var meta := Label.new()
+	meta.text = "cache %s   ·   %d 回合" % [_fmt_tok(int(u.get("cache", 0))), int(u.get("turns", 0))]
+	meta.add_theme_font_size_override("font_size", 11)
+	meta.add_theme_color_override("font_color", Color(0.55, 0.58, 0.66))
+	vb.add_child(meta)
+	# context 佔用條
+	var ctx := int(u.get("context_now", 0))
+	var clab := Label.new()
+	clab.text = "context %s / %s" % [_fmt_tok(ctx), _fmt_tok(int(CONTEXT_MAX))]
+	clab.add_theme_font_size_override("font_size", 11)
+	clab.add_theme_color_override("font_color", Color(0.6, 0.64, 0.72))
+	vb.add_child(clab)
+	var pb := ProgressBar.new()
+	pb.max_value = CONTEXT_MAX
+	pb.value = clamp(float(ctx), 0.0, CONTEXT_MAX)
+	pb.show_percentage = false
+	pb.custom_minimum_size = Vector2(0, 8)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.09, 0.12, 1.0)
+	bg.set_corner_radius_all(4)
+	var fill := StyleBoxFlat.new()
+	# context 越滿越偏紅，提醒快爆
+	var frac: float = clamp(float(ctx) / CONTEXT_MAX, 0.0, 1.0)
+	fill.bg_color = Color(0.35, 0.7, 0.45).lerp(Color(0.9, 0.4, 0.35), frac)
+	fill.set_corner_radius_all(4)
+	pb.add_theme_stylebox_override("background", bg)
+	pb.add_theme_stylebox_override("fill", fill)
+	vb.add_child(pb)
+	return card
+
+func _fmt_tok(n: int) -> String:
+	if n >= 1000000:
+		return "%.1fM" % (n / 1000000.0)
+	if n >= 1000:
+		return "%.1fk" % (n / 1000.0)
+	return str(n)
+
 func _make_player() -> void:
 	var node := Node2D.new()
 	var spr := Sprite2D.new()
@@ -691,7 +885,8 @@ func _load_map() -> void:
 	var tw := int(m["tilewidth"])
 	_map_w = int(m["width"])
 	_map_h = int(m["height"])
-	get_window().size = Vector2i(int(_map_w * tw * SCALE), int(_map_h * tw * SCALE))
+	# 視窗寬 = 地圖寬 + 右側數據面板寬（地圖照舊畫在左側 0 起）
+	get_window().size = Vector2i(int(_map_w * tw * SCALE) + PANEL_W, int(_map_h * tw * SCALE))
 	# 載入 tileset 紋理
 	var tsets := []
 	for ts in m["tilesets"]:

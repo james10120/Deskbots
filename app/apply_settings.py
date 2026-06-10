@@ -1,10 +1,13 @@
-"""把 statusLine + 輕量 hooks 併入使用者全域 ~/.claude/settings.json。
+"""把 statusLine + 輕量 hooks 併入／移出使用者全域 ~/.claude/settings.json。
 
 由使用者自己執行（Claude 的工具被安全機制擋住修改該檔）：
-    py D:\\Work\\FunAI\\app\\apply_settings.py
+    py D:\\Work\\FunAI\\app\\apply_settings.py            # 套用
+    py D:\\Work\\FunAI\\app\\apply_settings.py --remove   # 移除（乾淨卸載）
 
-可重複執行（idempotent）：只新增/覆寫 statusLine 與我們這幾個 hook 事件，
-保留你原有的其他設定。執行前會先備份成 settings.json.bak。
+兩個方向都是 idempotent 且**非破壞性**：
+  - 套用：只補上 FunAI 的 statusLine 與這幾個事件的 emit hook，保留你原有的其他 hook。
+  - 移除：只拿掉 FunAI 自己的那幾筆（命令含 emit.py），事件清空才刪 key。
+執行前都會先備份成 settings.json.bak。
 """
 from __future__ import annotations
 
@@ -26,27 +29,107 @@ STATUSLINE = "py D:/Work/FunAI/app/statusline.py"
 EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd"]
 
 
-def main() -> None:
-    data = {}
-    if SETTINGS.exists():
+def _is_funai_cmd(cmd) -> bool:
+    return isinstance(cmd, str) and cmd.startswith(EMIT)
+
+
+def _strip_funai_groups(arr) -> list:
+    """從某事件的 hook 群組陣列中濾掉 FunAI 自己的條目，保留其他人的。"""
+    if not isinstance(arr, list):
+        return []
+    out = []
+    for grp in arr:
+        if not isinstance(grp, dict):
+            out.append(grp)
+            continue
+        inner = grp.get("hooks")
+        if isinstance(inner, list):
+            kept = [h for h in inner if not (isinstance(h, dict) and _is_funai_cmd(h.get("command")))]
+            if not kept:
+                continue          # 整組都是 FunAI → 丟掉
+            grp = dict(grp)
+            grp["hooks"] = kept
+        out.append(grp)
+    return out
+
+
+def _load(backup: bool) -> dict | None:
+    if not SETTINGS.exists():
+        return {}
+    if backup:
         shutil.copyfile(SETTINGS, SETTINGS.with_suffix(".json.bak"))
-        try:
-            data = json.loads(SETTINGS.read_text(encoding="utf-8-sig"))
-        except json.JSONDecodeError as e:
-            print(f"!! 無法解析現有 settings.json：{e}\n   請先手動檢查，未做變更。")
-            return
+    try:
+        return json.loads(SETTINGS.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as e:
+        print(f"!! 無法解析現有 settings.json：{e}\n   請先手動檢查，未做變更。")
+        return None
 
-    data["statusLine"] = {"type": "command", "command": STATUSLINE}
 
-    hooks = data.setdefault("hooks", {})
-    for ev in EVENTS:
-        hooks[ev] = [{"hooks": [{"type": "command", "command": f"{EMIT} {ev}"}]}]
-
+def _save(data: dict) -> None:
     SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def apply() -> None:
+    data = _load(backup=True)
+    if data is None:
+        return
+    # statusLine 是單一值，會蓋掉既有的 → 先把非 FunAI 的原值記下，移除時還原
+    prev_sl = data.get("statusLine")
+    if isinstance(prev_sl, dict) and prev_sl.get("command") != STATUSLINE:
+        data["_funaiPrevStatusLine"] = prev_sl
+    data["statusLine"] = {"type": "command", "command": STATUSLINE}
+    hooks = data.setdefault("hooks", {})
+    for ev in EVENTS:
+        arr = _strip_funai_groups(hooks.get(ev, []))   # 先去掉舊的 FunAI 條目（避免重複/更新）
+        arr.append({"hooks": [{"type": "command", "command": f"{EMIT} {ev}"}]})
+        hooks[ev] = arr
+    _save(data)
     print(f"✅ 已更新 {SETTINGS}")
     print(f"   statusLine + hooks: {', '.join(EVENTS)}")
     print("   備份在 settings.json.bak。重開一個 Claude Code session 即可看到狀態列機器人。")
+
+
+def remove() -> None:
+    if not SETTINGS.exists():
+        print("（settings.json 不存在，無事可做）")
+        return
+    data = _load(backup=True)
+    if data is None:
+        return
+    # statusLine：只在它確實指向 FunAI 時處理；有記下的原值就還原
+    sl = data.get("statusLine")
+    if isinstance(sl, dict) and sl.get("command") == STATUSLINE:
+        prev = data.pop("_funaiPrevStatusLine", None)
+        if prev is not None:
+            data["statusLine"] = prev      # 還原使用者原本的 statusLine
+        else:
+            data.pop("statusLine", None)
+    else:
+        data.pop("_funaiPrevStatusLine", None)   # 清掉殘留的記錄鍵
+    # hooks：濾掉 FunAI 條目，事件清空就刪 key
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        for ev in EVENTS:
+            if ev not in hooks:
+                continue
+            arr = _strip_funai_groups(hooks.get(ev, []))
+            if arr:
+                hooks[ev] = arr
+            else:
+                hooks.pop(ev, None)
+        if not hooks:
+            data.pop("hooks", None)
+    _save(data)
+    print(f"✅ 已從 {SETTINGS} 移除 FunAI 的 statusLine 與 hooks")
+    print("   你原有的其他設定都保留；備份在 settings.json.bak。")
+
+
+def main() -> None:
+    if "--remove" in sys.argv[1:] or "-r" in sys.argv[1:]:
+        remove()
+    else:
+        apply()
 
 
 if __name__ == "__main__":

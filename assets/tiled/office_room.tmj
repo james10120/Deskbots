@@ -170,8 +170,22 @@
          "width":9,
          "x":0,
          "y":0
+        }, 
+        {
+         "compression":"zlib",
+         "data":"eJxjYBh6oJGJgaEJiJuBuAWIW4G4DYjbmRBqJgLZk4B4MhBPAeKpQDwNiKcz4TZ3oAEAnWMHxQ==",
+         "encoding":"base64",
+         "height":11,
+         "id":13,
+         "name":"overlay",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":9,
+         "x":0,
+         "y":0
         }],
- "nextlayerid":13,
+ "nextlayerid":14,
  "nextobjectid":1,
  "orientation":"orthogonal",
  "renderorder":"right-down",

@@ -67,9 +67,10 @@ def main() -> None:
     H = mods[0][4]
     max_layer = max((max(L) if L else 0) for L, _, _, _, _ in mods)
 
+    max_ov = max((len(ovs) for _, _, ovs, _, _ in mods), default=0)
     combined: dict[int, list[int]] = {n: [0] * (total_w * H) for n in range(1, max_layer + 1)}
     navmask = [0] * (total_w * H)
-    overlay = [0] * (total_w * H)
+    overlays_out = [[0] * (total_w * H) for _ in range(max_ov)]   # 多個 overlay 層、保留順序
     xoff = 0
     for layers, nav, overlays, w, h in mods:
         for n, data in layers.items():
@@ -83,25 +84,25 @@ def main() -> None:
                 for c in range(w):
                     if nav[r * w + c]:
                         navmask[r * total_w + (xoff + c)] = 1
-        for ov in overlays:
+        for k, ov in enumerate(overlays):
             for r in range(h):
                 for c in range(w):
                     g = ov[r * w + c]
                     if g:
-                        overlay[r * total_w + (xoff + c)] = g
+                        overlays_out[k][r * total_w + (xoff + c)] = g
         xoff += w
 
     out = {
         "width": total_w, "height": H, "tilewidth": 16, "tileheight": 16,
         "tilesets": TILESETS,
         "layers": [{"name": "L%d" % n, "data": combined[n]} for n in range(1, max_layer + 1)],
-        "overlay": overlay,
+        "overlays": overlays_out,
         "solid": [0 if navmask[idx] else 1 for idx in range(total_w * H)],
     }
 
     (TILED_DIR / "map_baked.json").write_text(json.dumps(out), encoding="utf-8")
     print(f"烘焙完成：{len(COMPOSITION)} 模組 → {total_w}x{H}、{max_layer} 層、"
-          f"可走 {sum(navmask)} 格、overlay {sum(1 for g in overlay if g)} 格")
+          f"可走 {sum(navmask)} 格、overlay {max_ov} 層")
 
 
 if __name__ == "__main__":

@@ -35,8 +35,8 @@ const SEATS := [
 	{"col": 18, "row": 9, "face": "up"},
 	{"col": 21, "row": 9, "face": "up"},
 ]
-# 休息點（座位序對應；前 4 個=左休息室，後 4 個=右休息室）
-const LOUNGE_TILES := [[4, 6], [2, 8], [3, 3], [4, 3], [29, 6], [27, 8], [28, 3], [29, 3]]
+# 休息點（座位序對應；前 4=左休息室走廊、後 4=右休息室走廊，皆在 nav 可走格）
+const LOUNGE_TILES := [[1, 6], [1, 7], [1, 8], [1, 9], [26, 6], [26, 7], [26, 8], [26, 9]]
 # 等待位置（座位序對應；前 4 個=room1，後 4 個=room2）
 const WAIT_TILES := [[8, 3], [11, 2], [15, 3], [13, 3], [17, 3], [20, 2], [24, 3], [22, 3]]
 # 通道開口（強制可走，連通各模組）
@@ -349,8 +349,8 @@ func _update_robot(r, delta: float) -> void:
 		# 靜止面向：上排座位朝上、其餘朝下
 		r.dir = 1 if (not resting and r.home_facing == "up") else 3
 	r.node.position = r.pos
-	# Y-Sort：角色依腳底 Y 與家具一起排前後（自動，免逐座位調圖層）
-	r.node.z_index = int(r.pos.y + FRAME_H * SCALE * 0.5)
+	# 角色在家具之上(1000+)、overlay 之下；角色間仍依腳底 Y 互相排序
+	r.node.z_index = 1000 + int(r.pos.y + FRAME_H * SCALE * 0.5)
 	# 3) 選角色貼圖 + BOT 列 + 幀
 	var ctex = _bot_tex.get(str(r.character), null)
 	if ctex != null:
@@ -505,7 +505,7 @@ func _update_player(delta: float) -> void:
 		else:
 			_player.dir = 1 if v.y < 0 else 3
 	_player.node.position = _player.pos
-	_player.node.z_index = int(_player.pos.y + FRAME_H * SCALE * 0.5)
+	_player.node.z_index = 1000 + int(_player.pos.y + FRAME_H * SCALE * 0.5)
 	var row := ROW_WALK if moving else ROW_IDLE
 	_player.t += delta
 	var frame := int(_player.t / FRAME_DUR) % 6
@@ -590,35 +590,38 @@ func _load_map() -> void:
 			spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			spr.scale = Vector2(SCALE, SCALE)
 			spr.position = Vector2(col * tw, row * tw) * SCALE
-			# Y-Sort：地板永遠最底；家具依「格底 Y」排序，與角色腳底 Y 比前後
-			spr.z_index = -4096 if li == 0 else int((row + 1) * 16 * SCALE)
+			# 無 Y-Sort：家具固定在角色之後，依圖層順序疊（z 0~8）
+			spr.z_index = li
 			add_child(spr)
 		li += 1
-	# overlay：使用者標記「永遠畫在角色前面」的瓦片（z=3000，角色之上、名牌之下）
-	var ov = m.get("overlay", [])
-	for idx in range(ov.size()):
-		var gid := int(ov[idx])
-		if gid <= 0:
-			continue
-		var ts = _pick_tileset(tsets, gid)
-		if ts == null:
-			continue
-		var local := gid - int(ts["firstgid"])
-		var cols := int(ts["columns"])
-		@warning_ignore("integer_division")
-		var sy := (local / cols) * tw
-		@warning_ignore("integer_division")
-		var row := idx / _map_w
-		var spr := Sprite2D.new()
-		spr.texture = ts["tex"]
-		spr.region_enabled = true
-		spr.region_rect = Rect2((local % cols) * tw, sy, tw, tw)
-		spr.centered = false
-		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		spr.scale = Vector2(SCALE, SCALE)
-		spr.position = Vector2((idx % _map_w) * tw, row * tw) * SCALE
-		spr.z_index = 3000
-		add_child(spr)
+	# overlay：使用者標記「永遠畫在角色前面」的層；多層依序疊（後面的更前面）
+	var ovls = m.get("overlays", [])
+	var ovz := 3000
+	for ovl in ovls:
+		for idx in range(ovl.size()):
+			var gid := int(ovl[idx])
+			if gid <= 0:
+				continue
+			var ts = _pick_tileset(tsets, gid)
+			if ts == null:
+				continue
+			var local := gid - int(ts["firstgid"])
+			var cols := int(ts["columns"])
+			@warning_ignore("integer_division")
+			var sy := (local / cols) * tw
+			@warning_ignore("integer_division")
+			var row := idx / _map_w
+			var spr := Sprite2D.new()
+			spr.texture = ts["tex"]
+			spr.region_enabled = true
+			spr.region_rect = Rect2((local % cols) * tw, sy, tw, tw)
+			spr.centered = false
+			spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			spr.scale = Vector2(SCALE, SCALE)
+			spr.position = Vector2((idx % _map_w) * tw, row * tw) * SCALE
+			spr.z_index = ovz
+			add_child(spr)
+		ovz += 1
 	# 障礙格用 bake_map.py 算好的 solid（含地板層的牆 + 上層家具）
 	var solid := {}
 	var sgrid = m.get("solid", [])
@@ -641,8 +644,6 @@ func _build_astar(solid: Dictionary) -> void:
 	# 座位與休息點一定要可走（否則機器人到不了）
 	for s in SEATS:
 		_astar.set_point_solid(Vector2i(int(s.col), int(s.row)), false)
-	for t in LOUNGE_TILES:
-		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
 	for t in WAIT_TILES:
 		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
 	for t in PASSAGE_TILES:

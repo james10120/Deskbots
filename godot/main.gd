@@ -25,21 +25,22 @@ const WALK_SPEED := 120.0      # 走動速度 px/s
 
 # 工作座位（來自 Tiled 地圖的格座標 col,row；face=面向 down/up）
 const SEATS := [
-	{"col": 3, "row": 5, "face": "down"},
-	{"col": 6, "row": 5, "face": "down"},
-	{"col": 3, "row": 9, "face": "up"},
-	{"col": 6, "row": 9, "face": "up"},
+	{"col": 9, "row": 5, "face": "down"},   # room1
+	{"col": 12, "row": 5, "face": "down"},
+	{"col": 9, "row": 9, "face": "up"},
+	{"col": 12, "row": 9, "face": "up"},
+	{"col": 18, "row": 5, "face": "down"},  # room2
+	{"col": 21, "row": 5, "face": "down"},
+	{"col": 18, "row": 9, "face": "up"},
+	{"col": 21, "row": 9, "face": "up"},
 ]
-# 休息室休息點（格座標）
-const LOUNGE_TILES := [[15, 2], [13, 2], [14, 6], [11, 6]]
-# 等待狀態移動到的位置（格座標）—— 依座位序對應
-const WAIT_TILES := [[5, 3], [6, 3], [9, 3], [2, 3]]
-# ── 圖層/座位微調（改完重啟 start_map.cmd 生效）──
-# 角色插入的圖層深度＝Tiled 裡的空白圖層當插入點（index = Tiled 層號 - 1）。
-# 在該層以下的圖層畫在角色之後，以上的畫在角色之前。
-const CHAR_LAYER_DEFAULT := 3   # Tiled 第4層(空白)：走動/待機/座位1、2 等大多數情況
-const CHAR_LAYER_UPSEAT := 9    # Tiled 第10層(空白)：座位 3、4（面向上）
-# 座位人物上下位移（格，正值=往上移動的格數）
+# 休息點（座位序對應；前 4 個=左休息室，後 4 個=右休息室）
+const LOUNGE_TILES := [[4, 6], [2, 8], [3, 3], [4, 3], [29, 6], [27, 8], [28, 3], [29, 3]]
+# 等待位置（座位序對應；前 4 個=room1，後 4 個=room2）
+const WAIT_TILES := [[8, 3], [11, 2], [15, 3], [13, 3], [17, 3], [20, 2], [24, 3], [22, 3]]
+# 通道開口（強制可走，連通各模組）
+const PASSAGE_TILES := [[6, 4], [6, 5], [6, 6], [25, 4], [25, 5], [25, 6]]
+# 座位人物上下位移（格，正值=往上移動的格數）— 微調坐姿位置用
 const SEAT_UP_DY := 1.5
 const SEAT_DOWN_DY := 0.5
 
@@ -66,19 +67,40 @@ var _astar: AStarGrid2D
 var _bot_tex := {}   # 角色名 -> Texture2D（BOT1~BOT9）
 var _dragging := false
 var _drag_off := Vector2i()
+var _selected := ""           # 被點選顯示進度的 session
+var _detail_win: Window       # 大型進度視窗（獨立 OS 視窗）
+var _detail_text: RichTextLabel
+var _detail_input: LineEdit
+var _detail_t := 0.0          # 刷新計時
 
 func _input(event: InputEvent) -> void:
-	# 整個視窗可拖曳（無邊框，靠滑鼠左鍵拖移視窗位置）
+	# 左鍵：點機器人→顯示進度氣泡；點空白→拖曳整個視窗
 	if _debug_mode:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
-			_dragging = true
-			_drag_off = DisplayServer.mouse_get_position() - get_window().position
+			var hit := _robot_at(get_viewport().get_mouse_position())
+			if hit != "":
+				if hit == _selected and _detail_win.visible:
+					_selected = ""
+					_detail_win.hide()         # 再點同一隻 = 關閉
+				else:
+					_open_detail(hit)          # 點機器人 = 開獨立大視窗
+				_dragging = false
+			else:
+				_dragging = true               # 點空白 = 拖視窗
+				_drag_off = DisplayServer.mouse_get_position() - get_window().position
 		else:
 			_dragging = false
 	elif event is InputEventMouseMotion and _dragging:
 		get_window().position = DisplayServer.mouse_get_position() - _drag_off
+
+func _robot_at(mp: Vector2) -> String:
+	for sid in _robots:
+		var p: Vector2 = _robots[sid].pos
+		if abs(mp.x - p.x) < 14.0 and mp.y > p.y - 28.0 and mp.y < p.y + 26.0:
+			return sid
+	return ""
 
 func _ready() -> void:
 	# 透明背景（多管齊下，確保 Windows 上生效）
@@ -89,6 +111,7 @@ func _ready() -> void:
 	var w := get_window()
 	w.borderless = true
 	w.always_on_top = true
+	_build_detail_window()
 	_shot = OS.get_cmdline_args().has("--shot")
 	for i in range(1, 10):   # 載入 BOT1~BOT9（缺檔就略過）
 		var nm := "BOT%d" % i
@@ -126,6 +149,160 @@ func _process(delta: float) -> void:
 	# 行為（移動）+ 動畫
 	for sid in _robots:
 		_update_robot(_robots[sid], delta)
+	# 大型進度視窗：開著就定期刷新內容
+	if _selected != "" and _robots.has(_selected) and _detail_win.visible:
+		_detail_t -= delta
+		if _detail_t <= 0.0:
+			_detail_t = 1.0
+			_refresh_detail()
+	elif _detail_win.visible and (_selected == "" or not _robots.has(_selected)):
+		_detail_win.hide()
+
+func _build_detail_window() -> void:
+	_detail_win = Window.new()
+	_detail_win.title = "FunAI 進度"
+	_detail_win.size = Vector2i(560, 600)
+	_detail_win.visible = false
+	add_child(_detail_win)
+	_detail_win.close_requested.connect(_on_detail_close)
+	var bg := ColorRect.new()
+	bg.color = Color(0.09, 0.10, 0.13, 1.0)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_detail_win.add_child(bg)
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for m in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		margin.add_theme_constant_override(m, 16)
+	_detail_win.add_child(margin)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	margin.add_child(vbox)
+	_detail_text = RichTextLabel.new()
+	_detail_text.bbcode_enabled = true
+	_detail_text.scroll_active = true
+	_detail_text.scroll_following = true
+	_detail_text.selection_enabled = true
+	_detail_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_detail_text.add_theme_font_size_override("normal_font_size", 15)
+	vbox.add_child(_detail_text)
+	var row := HBoxContainer.new()
+	vbox.add_child(row)
+	_detail_input = LineEdit.new()
+	_detail_input.placeholder_text = "輸入指令送給這個 session（Enter 送出，實驗性）…"
+	_detail_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_detail_input.text_submitted.connect(_on_reply_submitted)
+	row.add_child(_detail_input)
+	var btn := Button.new()
+	btn.text = "送出"
+	btn.pressed.connect(_on_send_pressed)
+	row.add_child(btn)
+
+func _on_detail_close() -> void:
+	_selected = ""
+	_detail_win.hide()
+
+func _open_detail(sid: String) -> void:
+	_selected = sid
+	_refresh_detail()
+	# 置中於螢幕
+	var scr := get_window().current_screen
+	var sp := DisplayServer.screen_get_size(scr)
+	var so := DisplayServer.screen_get_position(scr)
+	_detail_win.position = so + (sp - _detail_win.size) / 2
+	_detail_win.visible = true
+	_detail_input.grab_focus()
+
+func _on_send_pressed() -> void:
+	_on_reply_submitted(_detail_input.text)
+
+func _on_reply_submitted(text: String) -> void:
+	text = text.strip_edges()
+	if text == "" or _selected == "" or not _robots.has(_selected):
+		return
+	var cwd := str(_robots[_selected].get("cwd", ""))
+	var safe := text.replace("\"", "'")
+	var cmd := "claude --resume %s -p \"%s\"" % [_selected, safe]   # 接續該 session 跑一回合
+	if cwd != "":
+		cmd = "cd /d \"%s\" && %s" % [cwd, cmd]
+	OS.create_process("cmd.exe", ["/c", cmd])
+	_detail_input.clear()
+	_detail_text.text += "\n\n[color=#88ccff]👤 你（送出）：[/color] " + _clip(text, 240)
+
+func _refresh_detail() -> void:
+	if _selected == "" or not _robots.has(_selected):
+		return
+	var r = _robots[_selected]
+	_detail_win.title = "%s — %s" % [str(r.project), str(r.state)]
+	var body := _transcript_log(str(r.get("transcript", "")))
+	if body == "":
+		body = "[color=#888888](尚無對話記錄)[/color]"
+	_detail_text.text = body
+
+func _transcript_log(path: String) -> String:
+	# 讀 transcript 尾端（位元組對齊換行，避免 Unicode/NUL 警告），組出最近對話/工具
+	if path == "" or not FileAccess.file_exists(path):
+		return ""
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return ""
+	var flen := f.get_length()
+	var start: int = max(0, flen - 200000)
+	f.seek(start)
+	var bytes := f.get_buffer(flen - start)
+	f.close()
+	if start > 0:
+		var nl := bytes.find(10)
+		if nl >= 0:
+			bytes = bytes.slice(nl + 1)
+	var endnl := bytes.rfind(10)
+	if endnl >= 0:
+		bytes = bytes.slice(0, endnl + 1)
+	var events: Array = []
+	for ln in bytes.get_string_from_utf8().split("\n"):
+		var s: String = ln.strip_edges()
+		if s == "" or not s.begins_with("{"):
+			continue
+		var j = JSON.parse_string(s)
+		if typeof(j) != TYPE_DICTIONARY:
+			continue
+		var t := str(j.get("type", ""))
+		var msg = j.get("message", {})
+		if typeof(msg) != TYPE_DICTIONARY:
+			continue
+		var content = msg.get("content", null)
+		if t == "user":
+			var up := ""
+			if content is String:
+				up = content
+			elif content is Array:
+				for b in content:
+					if typeof(b) == TYPE_DICTIONARY and str(b.get("type", "")) == "text":
+						up = str(b.get("text", ""))
+			if up.strip_edges() != "":
+				events.append("[color=#88ccff]👤 你：[/color] " + _clip(up, 800))
+		elif t == "assistant" and content is Array:
+			for b in content:
+				if typeof(b) != TYPE_DICTIONARY:
+					continue
+				if str(b.get("type", "")) == "text" and str(b.get("text", "")).strip_edges() != "":
+					events.append("[color=#dddddd]🤖[/color] " + _clip(str(b.get("text", "")), 2000))
+				elif str(b.get("type", "")) == "tool_use":
+					events.append("[color=#ffcc66]🔧 " + str(b.get("name", "")) + "[/color] " + _clip(_tool_hint(b.get("input", {})), 100))
+	if events.size() > 30:
+		events = events.slice(events.size() - 30)
+	return "\n\n".join(events)
+
+func _clip(s: String, n: int) -> String:
+	s = s.replace("[", "(").replace("]", ")")   # 避免 BBCode 衝突
+	return s if s.length() <= n else s.substr(0, n) + "…"
+
+func _tool_hint(inp) -> String:
+	if typeof(inp) != TYPE_DICTIONARY:
+		return ""
+	for k in ["file_path", "command", "pattern", "query", "path", "url", "description"]:
+		if inp.has(k):
+			return str(inp[k])
+	return ""
 
 func _update_robot(r, delta: float) -> void:
 	# 1) 決定目標：idle/done → 休息室休息；其他 → 長桌座位工作
@@ -171,12 +348,8 @@ func _update_robot(r, delta: float) -> void:
 		# 靜止面向：上排座位朝上、其餘朝下
 		r.dir = 1 if (not resting and r.home_facing == "up") else 3
 	r.node.position = r.pos
-	# 夾在 CHAR_LAYER 之下、CHAR_LAYER-1 之上；同層內以列(腳底 Y)互相排序
-	# 角色插在指定的空白圖層深度；座位 3、4 用更前面的插入層
-	var clayer := CHAR_LAYER_DEFAULT
-	if not r.moving and not resting and r.state != "waiting" and r.home_facing == "up":
-		clayer = CHAR_LAYER_UPSEAT   # 只有座位 3、4 真正在工作時用第 10 層
-	r.node.z_index = clayer * 100 + int(r.pos.y / (16.0 * SCALE))
+	# Y-Sort：角色依腳底 Y 與家具一起排前後（自動，免逐座位調圖層）
+	r.node.z_index = int(r.pos.y + FRAME_H * SCALE * 0.5)
 	# 3) 選角色貼圖 + BOT 列 + 幀
 	var ctex = _bot_tex.get(str(r.character), null)
 	if ctex != null:
@@ -198,13 +371,6 @@ func _update_robot(r, delta: float) -> void:
 	var frame := int(r.anim_t / FRAME_DUR) % frames
 	var col: int = (int(r.dir) * 6 + frame) if dir_based else frame
 	r.sprite.region_rect = Rect2(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
-	# 4) 等你授權 → 頭上跳動的 ! 警示
-	if r.state == "waiting":
-		r.alert.visible = true
-		var bounce: float = abs(sin(r.anim_t * 7.0)) * 5.0
-		r.alert.position = Vector2(-4, -FRAME_H * SCALE * 0.5 - 30 - bounce)
-	else:
-		r.alert.visible = false
 
 func _scan() -> void:
 	var seen := {}
@@ -265,7 +431,7 @@ func _upsert(data: Dictionary) -> void:
 		add_child(node)
 		node.position = seat
 		r = {
-			"node": node, "sprite": spr, "label": lbl, "alert": _make_alert(node), "anim_t": 0.0,
+			"node": node, "sprite": spr, "label": lbl, "anim_t": 0.0,
 			"pos": seat, "target": seat, "home": seat,
 			"moving": false, "dir": 3, "wander_t": 0.0,
 			"resting_now": false, "home_facing": seat_face, "seat_idx": si,
@@ -278,6 +444,11 @@ func _upsert(data: Dictionary) -> void:
 	r.home = seat
 	r.home_facing = seat_face
 	r.seat_idx = si
+	r.project = project
+	r.tool = str(data.get("tool", ""))
+	r.message = str(data.get("message", ""))
+	r.transcript = str(data.get("transcript", ""))
+	r.cwd = str(data.get("cwd", ""))
 	r.label.text = project
 	r.label.add_theme_color_override("font_color", STATE_COLOR.get(state, Color.WHITE))
 	r.label.add_theme_stylebox_override("normal", _name_bg())
@@ -292,23 +463,6 @@ func _name_bg() -> StyleBoxFlat:
 	sb.set_content_margin_all(2)
 	sb.set_corner_radius_all(2)
 	return sb
-
-func _make_alert(node: Node2D) -> Label:
-	# 等你授權時頭上跳動的黃底紅 ! 警示
-	var a := Label.new()
-	a.text = "!"
-	a.add_theme_font_size_override("font_size", 14)
-	a.add_theme_color_override("font_color", Color(0.85, 0.1, 0.1))
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1.0, 0.9, 0.2, 0.95)
-	sb.set_content_margin_all(3)
-	sb.set_corner_radius_all(4)
-	a.add_theme_stylebox_override("normal", sb)
-	a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	a.z_index = 4001
-	a.visible = false
-	node.add_child(a)
-	return a
 
 func _tile_px(col: float, row: float) -> Vector2:
 	# 格座標 → 螢幕像素（格中心，已含 4x 縮放）
@@ -376,7 +530,8 @@ func _load_map() -> void:
 			spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			spr.scale = Vector2(SCALE, SCALE)
 			spr.position = Vector2(col * tw, row * tw) * SCALE
-			spr.z_index = li * 100 + row   # 按 Tiled 圖層深度（層為主、列為輔）
+			# Y-Sort：地板永遠最底；其餘家具依「格底 Y」排序，與角色腳底 Y 比前後
+			spr.z_index = -4096 if li == 0 else int((row + 1) * 16 * SCALE)
 			add_child(spr)
 		li += 1
 	# 障礙格用 bake_map.py 算好的 solid（含地板層的牆 + 上層家具）
@@ -404,6 +559,8 @@ func _build_astar(solid: Dictionary) -> void:
 	for t in LOUNGE_TILES:
 		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
 	for t in WAIT_TILES:
+		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
+	for t in PASSAGE_TILES:
 		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
 
 func _world_to_cell(p: Vector2) -> Vector2i:

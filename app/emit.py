@@ -74,6 +74,7 @@ def main() -> None:
         "event": event,
         "ts": time.time(),
         "transcript": data.get("transcript_path", ""),  # 地圖端拿它的 mtime 當心跳偵測中斷
+        "cwd": (data.get("workspace") or {}).get("project_dir") or data.get("cwd", ""),
     }
     states.write_state(session_id, payload)
 

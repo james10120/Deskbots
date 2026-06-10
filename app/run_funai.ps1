@@ -1,4 +1,4 @@
-# FunAI 乾淨生命週期啟動器
+﻿# FunAI 乾淨生命週期啟動器
 #
 # 開 → 用 → 關，全程不汙染現有環境：
 #   1. 安裝 FunAI 的 hooks / statusLine 到全域 ~/.claude/settings.json
@@ -9,6 +9,9 @@
 # 由 run_funai.cmd 以 `-ExecutionPolicy Bypass` 呼叫（避免雙擊 .ps1 被執行原則擋）。
 
 $ErrorActionPreference = 'Continue'
+# cp950 主控台會把本腳本與 py 子行程的 UTF-8 中文輸出印成亂碼 → 切到 UTF-8
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+$env:PYTHONUTF8 = '1'   # 讓所有 py 子行程輸出也是 UTF-8（clean/bake 的中文才不亂碼）
 $App   = 'D:\Work\FunAI\app'
 $Godot = 'D:\Work\GameDev\Godot\Godot_v4.6.3-stable_win64.exe'
 $Runtime = 'D:\Work\FunAI\runtime'

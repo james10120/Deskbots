@@ -3,21 +3,13 @@ extends Node2D
 # 輪詢 runtime/sessions/*.json → 每個 session 一隻角色，依狀態播動畫、依專案分區。
 # 素材從 assets 絕對路徑載入，不需 import。
 
-const ASSET_DIR := "D:/Work/FunAI/assets/Modern tiles_Free/Characters_free/"
-# BOT1 角色表（16×32 幀，方向序 右0 上1 左2 正3；每方向 6 格）
-const BOT1_PNG := "D:/Work/FunAI/assets/characters/BOT1.png"
+# BOT 角色表（16×32 幀，方向序 右0 上1 左2 正3；每方向 6 格）
 const ROW_IDLE := 1    # 第2列：站著待機（4 向×6）
 const ROW_WALK := 2    # 第3列：走路（4 向×6）
 const ROW_PHONE := 6   # 第7列：等待滑手機（12 格，正面）
 const ROW_READ := 7    # 第8列：休息看書（12 格，正面）
 const SESSIONS_DIR := "D:/Work/FunAI/runtime/sessions"
-const ROOM_BUILDER := "D:/Work/FunAI/assets/Modern tiles_Free/Interiors_free/16x16/Room_Builder_free_16x16.png"
-const INTERIORS := "D:/Work/FunAI/assets/Modern tiles_Free/Interiors_free/16x16/Interiors_free_16x16.png"
 const TILED_DIR := "D:/Work/FunAI/assets/tiled/"
-
-# 地板格在 Room_Builder 裡的座標（col,row，16px 單位）—— 用截圖校正
-const FLOOR_COL := 7
-const FLOOR_ROW := 14
 
 # 時間衰減（秒）：沒有「中斷」hook，靠 ts 變舊自我修正
 const DONE_DECAY := 4.0      # done 顯示一下就回 idle
@@ -31,11 +23,6 @@ const POLL_SEC := 0.4          # 多久掃一次 sessions 資料夾
 const FRAME_DUR := 0.14        # 每幀動畫秒數
 const WALK_SPEED := 120.0      # 走動速度 px/s
 
-# ── 單一辦公室佈局（所有東西統一 4x，一格 = 64px，角色 = 1x2 格）──
-const TILE := 64               # 16 * SCALE
-const WIN_W := 1080
-const WIN_H := 720
-const OFFICE_MARGIN := 24      # 視窗邊到外牆
 # 工作座位（來自 Tiled 地圖的格座標 col,row；face=面向 down/up）
 const SEATS := [
 	{"col": 3, "row": 5, "face": "down"},
@@ -56,24 +43,6 @@ const CHAR_LAYER_UPSEAT := 9    # Tiled 第10層(空白)：座位 3、4（面向
 const SEAT_UP_DY := 1.5
 const SEAT_DOWN_DY := 0.5
 
-# 狀態 → 動作圖檔名片段（角色名 + 這個 + _16x16.png）
-const STATE_SHEET := {
-	"idle": "idle_anim",
-	"thinking": "idle_anim",
-	"working": "phone",      # 低頭操作，像在打字（sit 圖幀向不一致，待有桌子再用）
-	"waiting": "run",
-	"done": "run",
-	"error": "idle_anim",
-}
-# 各動作圖「面向下」要循環的幀數：idle_anim/run 是 4 向×6（取前 6），phone 是單向 9 幀
-const STATE_FRAMES := {
-	"idle": 6,
-	"thinking": 6,
-	"working": 9,
-	"waiting": 6,
-	"done": 6,
-	"error": 6,
-}
 # 狀態 → 名牌顏色提示
 const STATE_COLOR := {
 	"idle": Color(0.7, 0.7, 0.7),
@@ -84,14 +53,12 @@ const STATE_COLOR := {
 	"error": Color(1.0, 0.5, 0.5),
 }
 
-var _robots := {}            # session_id -> { node, sprite, label, sheet, anim_t, char }
-var _tex_cache := {}         # 圖片路徑 -> Texture2D
-var _project_slots := {}     # project 名 -> slot index（固定分區）
+var _robots := {}            # session_id -> 角色狀態 dict
+var _project_slots := {}     # session_id -> 座位 index
 var _next_slot := 0
 var _poll_t := 0.0
 var _shot := false
 var _shot_t := 0.0
-var _floor_tex: Texture2D
 var _debug_mode := false
 var _map_w := 17
 var _map_h := 11
@@ -123,18 +90,11 @@ func _ready() -> void:
 	w.borderless = true
 	w.always_on_top = true
 	_shot = OS.get_cmdline_args().has("--shot")
-	_floor_tex = _floor_tile(FLOOR_COL, FLOOR_ROW)
 	for i in range(1, 10):   # 載入 BOT1~BOT9
 		var nm := "BOT%d" % i
 		var img := Image.load_from_file("D:/Work/FunAI/assets/characters/%s.png" % nm)
 		if img != null:
 			_bot_tex[nm] = ImageTexture.create_from_image(img)
-	if OS.get_cmdline_args().has("--floors"):
-		get_window().size = Vector2i(620, 620)
-		_debug_mode = true
-		_debug_floors()
-		_shot = true
-		return
 	if OS.get_cmdline_args().has("--bot"):
 		get_window().size = Vector2i(720, 420)
 		RenderingServer.set_default_clear_color(Color(0.5, 0.5, 0.5, 1))
@@ -236,13 +196,6 @@ func _update_robot(r, delta: float) -> void:
 	var col: int = (int(r.dir) * 6 + frame) if dir_based else frame
 	r.sprite.region_rect = Rect2(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
 
-func _random_office_point() -> Vector2:
-	var x0 := float(OFFICE_MARGIN + TILE + 20)
-	var x1 := float(WIN_W - OFFICE_MARGIN - TILE - 20)
-	var y0 := float(OFFICE_MARGIN + TILE + 40)
-	var y1 := float(WIN_H - OFFICE_MARGIN - TILE - 20)
-	return Vector2(randf_range(x0, x1), randf_range(y0, y1))
-
 func _scan() -> void:
 	var seen := {}
 	var dir := DirAccess.open(SESSIONS_DIR)
@@ -323,7 +276,6 @@ func _upsert(data: Dictionary) -> void:
 	if _lf != null:
 		r.label.position.x = -_lf.get_string_size(project, HORIZONTAL_ALIGNMENT_LEFT, -1, 8).x * 0.5 - 2
 
-
 func _name_bg() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0, 0, 0, 0.55)   # 名字半透明深色底，好讀
@@ -349,12 +301,6 @@ func _seat_px(i: int) -> Vector2:
 	else:
 		p.y -= SEAT_DOWN_DY * 16 * SCALE   # 座位 1、2（正值往上）
 	return p
-
-func _lounge_spots() -> Array:
-	var out := []
-	for t in LOUNGE_TILES:
-		out.append(_tile_px(t[0], t[1]))
-	return out
 
 func _load_map() -> void:
 	# 讀 bake_map.py 烘焙好的 map_baked.json，照圖層渲染整間辦公室
@@ -496,7 +442,6 @@ func _draw_grid() -> void:
 			lbl.z_index = 4096
 			add_child(lbl)
 
-
 func _placeholder(pos: Vector2, size: Vector2, col: Color, tag: String) -> void:
 	var rect := ColorRect.new()
 	rect.color = col
@@ -523,60 +468,6 @@ func _wall_strip(tex: Texture2D, pos: Vector2, w_tiles: float, h_tiles: float) -
 	tr.z_index = -999
 	add_child(tr)
 
-func _sheet_tile(sheet: String, col: int, row: int) -> Texture2D:
-	var img := Image.load_from_file(sheet)
-	if img == null:
-		return null
-	return ImageTexture.create_from_image(img.get_region(Rect2i(col * 16, row * 16, 16, 16)))
-
-func _debug_floors() -> void:
-	# 通用瓦片調色盤：貼出指定圖集的取樣格 + 座標，供截圖挑選
-	var sheet := INTERIORS                          # 改這裡換圖集
-	var cols := [0, 2, 4, 6, 8, 10, 12, 14]
-	var rows := [44, 46, 48, 50, 52, 54, 56, 58]    # 改這裡換掃描列
-	var img := Image.load_from_file(sheet)
-	if img == null:
-		return
-	var cellx := 70
-	var celly := 70
-	for iy in rows.size():
-		for ix in cols.size():
-			var c: int = cols[ix]
-			var r: int = rows[iy]
-			var sub := img.get_region(Rect2i(c * 16, r * 16, 16, 16))
-			var tr := TextureRect.new()
-			tr.texture = ImageTexture.create_from_image(sub)
-			tr.stretch_mode = TextureRect.STRETCH_KEEP
-			tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			tr.scale = Vector2(3, 3)
-			tr.position = Vector2(12 + ix * cellx, 12 + iy * celly)
-			add_child(tr)
-			var lbl := Label.new()
-			lbl.text = "%d,%d" % [c, r]
-			lbl.add_theme_font_size_override("font_size", 10)
-			lbl.position = Vector2(12 + ix * cellx, 12 + iy * celly + 50)
-			lbl.add_theme_color_override("font_color", Color.BLACK)
-			add_child(lbl)
-
-func _floor_tile(col: int, row: int) -> Texture2D:
-	var img := Image.load_from_file(ROOM_BUILDER)
-	if img == null:
-		return null
-	var sub := img.get_region(Rect2i(col * 16, row * 16, 16, 16))
-	return ImageTexture.create_from_image(sub)
-
-func _spawn_floor(pos: Vector2) -> void:
-	if _floor_tex == null:
-		return
-	var rug := TextureRect.new()
-	rug.texture = _floor_tex
-	rug.stretch_mode = TextureRect.STRETCH_TILE
-	rug.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	rug.size = Vector2(128, 112)             # 8x7 格地毯
-	rug.position = pos - Vector2(64, 48)     # 置中於角色腳下區域
-	rug.z_index = -1                          # 在角色之後
-	add_child(rug)
-
 func _read_json(path: String):
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
@@ -585,13 +476,3 @@ func _read_json(path: String):
 	f.close()
 	var res = JSON.parse_string(txt)
 	return res if res is Dictionary else null
-
-func _load_tex(path: String) -> Texture2D:
-	if _tex_cache.has(path):
-		return _tex_cache[path]
-	var img := Image.load_from_file(path)
-	if img == null:
-		return null
-	var tex := ImageTexture.create_from_image(img)
-	_tex_cache[path] = tex
-	return tex

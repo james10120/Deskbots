@@ -1,58 +1,61 @@
-# FunAI — Claude Code 機器人地圖
+# FunAI — Claude Code 機器人辦公室地圖
 
-把每個正在執行的 Claude Code session 變成一張俯瞰辦公室地圖上的小機器人，
-依工作狀態播放角色動畫，透明置頂疊在桌面上。一眼看出哪個專案在忙、哪個在等你授權。
+把每個正在執行的 Claude Code session 變成一張俯瞰辦公室地圖上的小機器人：
+工作時坐在自己座位、等你授權時走到等待區滑手機、忙完走去休息室看書。
+透明置頂疊在桌面上，一眼看出哪個專案在忙、哪個在等你。
 
 ## 架構
 
 ```
-資料層 (Python，引擎無關)                渲染層 (Godot 4，待建)
-Claude Code hooks                        透明置頂疊層視窗
-  └ app/emit.py <EVENT>                  俯瞰辦公室 (Modern Interiors 瓦片)
-      └ 寫 runtime/sessions/<id>.json →  每 session 一隻角色，依 state 播動畫
-app/statusline.py                        每 ~200ms 輪詢 sessions/ 增刪角色
-  └ 底部狀態列文字進度
+資料層 (Python，引擎無關)              渲染層 (Godot 4，OpenGL Compatibility)
+Claude Code hooks                       透明置頂疊層視窗
+  └ app/emit.py <EVENT>                 Tiled 辦公室地圖 (office.tmj) 渲染
+      └ 寫 runtime/sessions/<id>.json → 每 session 一隻角色 (BOT1~9)
+app/statusline.py                       依狀態走位/播動畫、A* 繞牆尋路
+  └ 底部狀態列文字進度                   每 ~0.4s 輪詢 sessions/ 增刪角色
 ```
 
-- **解耦**：hooks 只負責「寫狀態」；狀態列與 Godot 各自獨立讀 `runtime/sessions/`。
-- **多 session**：以 hook 帶的 `session_id` 分檔；`project`（cwd 末段）當名牌；
-  `SessionEnd` 刪檔讓角色離場；超時自動衰減為 idle。
+## 狀態 → 行為 / 動畫
 
-## 狀態對照
+| Claude 事件 | state | 機器人行為 | BOT 動畫 |
+|------------|-------|-----------|---------|
+| SessionStart | idle | 走去休息室看書 | 看書(第8列) |
+| UserPromptSubmit | thinking | 在座位 | 待機(第2列) |
+| PreToolUse | working | 在座位工作 | 待機(第2列) |
+| Notification | waiting | 走到等待區滑手機 | 滑手機(第7列) |
+| Stop | done | 走去休息室看書 | 看書(第8列) |
+| (移動中) | — | 沿走道繞牆 | 走路(第3列) |
+| SessionEnd | — | 離場 | — |
 
-| Claude 事件 | state | 角色動畫 | emoji |
-|------------|-------|---------|-------|
-| SessionStart | idle | idle | 😴 |
-| UserPromptSubmit | thinking | idle_anim | 🤔 |
-| PreToolUse | working | sit | 🛠️ |
-| PostToolUse (錯誤) | error | idle_anim | 💢 |
-| Notification | waiting | run | 🙋 |
-| Stop | done | run | ✅ |
-| SessionEnd | (離場) | — | — |
+中斷偵測：Claude Code 無中斷 hook，靠 transcript 檔的 mtime 當心跳（停止更新→回 idle）。
 
-對照表的權威定義在 `app/states.py`。
+## 啟動
+
+雙擊 **`app/start_map.cmd`**（清殭屍 session → 烘焙地圖 → 啟動 Godot）。
+首次需先跑 `app/apply_settings.py`（自己執行）把 hooks + statusLine 併入 `~/.claude/settings.json`，再開新的 Claude Code session。
 
 ## 檔案
 
-- `app/states.py` — 共用：路徑、狀態/角色對照、session 檔讀寫、穩健 stdin 載入
-- `app/emit.py` — hook 進入點（`py emit.py <EVENT>`），鐵則：永不拋例外、永遠 exit 0
-- `app/statusline.py` — statusLine 進入點，顯示本 session + 其他 session 概況
+- `app/emit.py` — hook 進入點（`py emit.py <EVENT>`），永不拋例外、永遠 exit 0
+- `app/states.py` — 共用：狀態對照、角色分配(BOT1~9)、session 檔讀寫
+- `app/statusline.py` — statusLine 文字進度
+- `app/bake_map.py` — 把 Tiled `office.tmj` 解壓成 Godot 好讀的 `map_baked.json` + 障礙格
+- `app/clean_sessions.py` / `apply_settings.py` / `start_map.cmd` — 維運/啟動
+- `godot/main.gd` — 渲染、行為、尋路、圖層、動畫（座位/圖層調整參數在檔案最上方）
+- `assets/characters/BOT1~9.png` — 角色動畫表（16×32 幀）
+- `assets/tiled/office.tmj` + tileset PNG — Tiled 辦公室地圖
 - `runtime/sessions/<id>.json` — 執行期狀態（gitignored）
-- `assets/` — Modern Interiors 瓦片與角色精靈（待解壓）
-- `godot/` — Godot 4 專案（待建）
+- `docs/` — TILED / CHARACTERS / PACK_GUIDE / ASSETS 說明
 
-素材：`D:\Work\GameDev\Resource\Pixel\Modern_Interiors`（LimeZu，16×16）。
+## 調整（godot/main.gd 最上方常數）
 
-## 進度
+- `SEATS` / `LOUNGE_TILES` / `WAIT_TILES` — 座位、休息點、等待點的格座標
+- `CHAR_LAYER_DEFAULT` / `CHAR_LAYER_UPSEAT` — 角色插入的 Tiled 圖層深度（用空白圖層當插入點）
+- `SEAT_UP_DY` / `SEAT_DOWN_DY` — 座位人物上下微調（正=往上幾格）
+- `SCALE` — 整體縮放（視窗自動跟著）
 
-- [x] 階段 0：hooks → emit.py → session JSON（已驗證並發、離場、編碼）
-- [x] 階段 1：statusline.py（已驗證 emoji 輸出 + 其他 session 概況）
-- [ ] 階段 1.5：把 hooks/statusLine 接進 `~/.claude/settings.json`（全域）
-- [ ] 階段 2：Godot 4 透明疊層地圖 + 角色動畫
-- [ ] 階段 3：打磨（尋路、點擊氣泡、進度百分比、音效、系統匣）
+改完存檔 → 跑 `start_map.cmd`（改程式不用重新烘焙；改地圖才要）。
 
-## settings.json 整合（全域）
+## 素材
 
-hooks 須放在「使用者全域」設定 `~/.claude/settings.json`，才能涵蓋所有專案的 session。
-見專案內 `docs/settings.snippet.json`。注意：PreToolUse/PostToolUse 每次工具呼叫都會
-spawn 一個 Python 行程（~0.1s），如在意延遲可改用 async hook 或只掛部分事件。
+Modern Office Revamped v1.2（LimeZu）。地圖在 Tiled 編輯，匯出 `.tmj` 到 `assets/tiled/`。

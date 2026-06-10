@@ -96,6 +96,7 @@ var _detail_win: Window       # 大型進度視窗（獨立 OS 視窗）
 var _detail_text: RichTextLabel
 var _detail_header: Label
 var _detail_input: LineEdit   # 送訊息/指令給該 session 的輸入框
+var _detail_hint: Label       # hwnd 缺失時的提示
 var _detail_t := 0.0          # 刷新計時
 var _detail_dragging := false
 var _detail_drag_off := Vector2i()
@@ -147,9 +148,15 @@ func _focus_selected_terminal() -> void:
 	if _selected == "" or not _robots.has(_selected):
 		return
 	var hw := int(_robots[_selected].get("hwnd", 0))
-	if hw != 0:
-		OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw)])
+	if hw == 0:
+		_flash_hint()
+		return
+	OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw)])
 	_on_detail_close()   # 叫出終端後對話卡就功成身退，自動關閉
+
+func _flash_hint() -> void:
+	if _detail_hint != null:
+		_detail_hint.visible = true
 
 func _btn_style(c: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -173,6 +180,7 @@ func _send_to_selected(text: String) -> void:
 		return
 	var hw := int(_robots[_selected].get("hwnd", 0))
 	if hw == 0:
+		_flash_hint()
 		return
 	OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw), "--send", text])
 
@@ -382,6 +390,13 @@ func _build_detail_window() -> void:
 	sbtn.add_theme_color_override("font_color", Color(0.92, 1.0, 0.95))
 	sbtn.pressed.connect(_send_detail_input)
 	inrow.add_child(sbtn)
+	# hwnd 缺失提示（無可聚焦終端時說明原因，避免靜默失敗）
+	_detail_hint = Label.new()
+	_detail_hint.add_theme_font_size_override("font_size", 12)
+	_detail_hint.add_theme_color_override("font_color", Color(1.0, 0.7, 0.4))
+	_detail_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail_hint.visible = false
+	vbox.add_child(_detail_hint)
 	# 快捷指令列
 	var qrow := HBoxContainer.new()
 	qrow.add_theme_constant_override("separation", 8)
@@ -443,6 +458,14 @@ func _refresh_detail() -> void:
 	if body == "":
 		body = "[color=#888888](尚無對話記錄)[/color]"
 	_detail_text.text = body
+	# 沒有可聚焦的終端視窗（hwnd=0）→ 送指令/呼叫終端無法用，明確說明、輸入框變灰
+	var has_win := int(r.get("hwnd", 0)) != 0
+	if _detail_hint != null:
+		_detail_hint.visible = not has_win
+		_detail_hint.text = "⚠ 抓不到這個 session 的終端視窗（可能在 VS Code 整合終端或無視窗環境啟動）。用啟動器開的獨立 PowerShell 視窗才能送指令／呼叫終端。"
+	if _detail_input != null:
+		_detail_input.editable = has_win
+		_detail_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出）" if has_win else "此 session 無可用終端視窗"
 
 func _transcript_log(path: String) -> String:
 	# 讀 transcript 尾端（位元組對齊換行，避免 Unicode/NUL 警告），組出最近對話/工具

@@ -73,6 +73,58 @@ def _parent_pid(pid: int) -> int:
     return ppid
 
 
+def _exe_name(pid: int) -> str:
+    snap = _k32.CreateToolhelp32Snapshot(0x2, 0)
+    if snap == -1:
+        return ""
+    e = _PE()
+    e.dwSize = ctypes.sizeof(_PE)
+    name = ""
+    try:
+        if _k32.Process32First(snap, ctypes.byref(e)):
+            while True:
+                if e.th32ProcessID == pid:
+                    name = e.szExeFile.decode("ascii", "replace").lower()
+                    break
+                if not _k32.Process32Next(snap, ctypes.byref(e)):
+                    break
+    finally:
+        _k32.CloseHandle(snap)
+    return name
+
+
+# 終端類視窗所屬的行程（前景後備只接受這些，避免誤抓地圖/瀏覽器等）
+_TERMINAL_EXES = (
+    "windowsterminal.exe", "wt.exe", "openconsole.exe", "conhost.exe",
+    "powershell.exe", "pwsh.exe", "cmd.exe", "code.exe", "alacritty.exe",
+)
+
+
+def _pid_of_window(hwnd: int) -> int:
+    p = wintypes.DWORD()
+    _u32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+    return int(p.value)
+
+
+def foreground_hwnd() -> int:
+    """前景視窗，但只在它是『終端類』視窗時才回傳（否則 0）。
+
+    SessionStart 當下使用者剛在終端裡打 claude，終端就是前景 → 抓得到；
+    父行程鏈在 Windows 上常因中間 shim 行程結束而斷，這是最可靠的後備。
+    """
+    if _u32 is None:
+        return 0
+    try:
+        hw = int(_u32.GetForegroundWindow())
+        if not hw:
+            return 0
+        if _exe_name(_pid_of_window(hw)) in _TERMINAL_EXES:
+            return hw
+        return 0
+    except Exception:
+        return 0
+
+
 def terminal_hwnd() -> int:
     if _u32 is None:
         return 0
@@ -88,7 +140,7 @@ def terminal_hwnd() -> int:
             hw = _main_window_of_pid(pid)
             if hw:
                 return hw
-        return 0
+        return foreground_hwnd()      # 父鏈斷掉的後備：前景終端視窗
     except Exception:
         return 0
 

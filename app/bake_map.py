@@ -44,28 +44,34 @@ def _load_module(name: str):
     m = json.loads((TILED_DIR / (name + ".tmj")).read_text(encoding="utf-8"))
     layers: dict[int, list[int]] = {}
     nav = None
+    overlays: list[list[int]] = []
     for L in m["layers"]:
         if L.get("type") != "tilelayer":
             continue
-        if L.get("name") == "nav":          # 走道標記層（不渲染，只當可走遮罩）
+        nm = L.get("name", "")
+        if nm == "nav":                     # 走道標記層（不渲染，只當可走遮罩）
             nav = _decode(L["data"])
             continue
-        nums = re.findall(r"\d+", L.get("name", ""))
+        if nm == "overlay":                 # 永遠畫在角色前面的層
+            overlays.append(_decode(L["data"]))
+            continue
+        nums = re.findall(r"\d+", nm)
         if nums:
             layers[int(nums[0])] = _decode(L["data"])
-    return layers, nav, int(m["width"]), int(m["height"])
+    return layers, nav, overlays, int(m["width"]), int(m["height"])
 
 
 def main() -> None:
     mods = [(_load_module(n)) for n in COMPOSITION]
-    total_w = sum(w for _, _, w, _ in mods)
-    H = mods[0][3]
-    max_layer = max((max(L) if L else 0) for L, _, _, _ in mods)
+    total_w = sum(w for _, _, _, w, _ in mods)
+    H = mods[0][4]
+    max_layer = max((max(L) if L else 0) for L, _, _, _, _ in mods)
 
     combined: dict[int, list[int]] = {n: [0] * (total_w * H) for n in range(1, max_layer + 1)}
     navmask = [0] * (total_w * H)
+    overlay = [0] * (total_w * H)
     xoff = 0
-    for layers, nav, w, h in mods:
+    for layers, nav, overlays, w, h in mods:
         for n, data in layers.items():
             for r in range(h):
                 for c in range(w):
@@ -77,21 +83,25 @@ def main() -> None:
                 for c in range(w):
                     if nav[r * w + c]:
                         navmask[r * total_w + (xoff + c)] = 1
+        for ov in overlays:
+            for r in range(h):
+                for c in range(w):
+                    g = ov[r * w + c]
+                    if g:
+                        overlay[r * total_w + (xoff + c)] = g
         xoff += w
 
     out = {
         "width": total_w, "height": H, "tilewidth": 16, "tileheight": 16,
         "tilesets": TILESETS,
         "layers": [{"name": "L%d" % n, "data": combined[n]} for n in range(1, max_layer + 1)],
+        "overlay": overlay,
+        "solid": [0 if navmask[idx] else 1 for idx in range(total_w * H)],
     }
-
-    # 走道層：有塗=可走，其餘(牆+家具)=障礙
-    solid = [0 if navmask[idx] else 1 for idx in range(total_w * H)]
-    out["solid"] = solid
 
     (TILED_DIR / "map_baked.json").write_text(json.dumps(out), encoding="utf-8")
     print(f"烘焙完成：{len(COMPOSITION)} 模組 → {total_w}x{H}、{max_layer} 層、"
-          f"可走 {sum(navmask)} 格、障礙 {sum(solid)} 格")
+          f"可走 {sum(navmask)} 格、overlay {sum(1 for g in overlay if g)} 格")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@
          "name":"nav",
          "opacity":1,
          "type":"tilelayer",
-         "visible":true,
+         "visible":false,
          "width":5,
          "x":0,
          "y":0
@@ -25,7 +25,7 @@
          "name":"\u5716\u584a\u5c64 1",
          "opacity":1,
          "type":"tilelayer",
-         "visible":false,
+         "visible":true,
          "width":5,
          "x":0,
          "y":0
@@ -60,6 +60,21 @@
         }, 
         {
          "compression":"zlib",
+         "data":"eJxjYBi+AAAA3AAB",
+         "encoding":"base64",
+         "height":11,
+         "id":10,
+         "name":"\u5716\u584a\u5c64 8",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":5,
+         "x":0,
+         "y":0
+        },
+    
+        {
+         "compression":"zlib",
          "data":"eJxjYBhc4AQTA8NJID4FxO2MELEbQPZNIL4FxNMZiTcLAG2pBhM=",
          "encoding":"base64",
          "height":11,
@@ -71,8 +86,7 @@
          "width":5,
          "x":0,
          "y":0
-        },
-    
+        }, 
         {
          "compression":"zlib",
          "data":"eJxjYBha4A4zptgbLGIgAAA9kgHP",
@@ -86,8 +100,22 @@
          "width":5,
          "x":0,
          "y":0
+        }, 
+        {
+         "compression":"zlib",
+         "data":"eJxjYKAf+MzIwPAFiL8y4lZzgomB4SQQn2Ki3D4A4i4FQQ==",
+         "encoding":"base64",
+         "height":11,
+         "id":9,
+         "name":"overlay",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":5,
+         "x":0,
+         "y":0
         }],
- "nextlayerid":9,
+ "nextlayerid":11,
  "nextobjectid":1,
  "orientation":"orthogonal",
  "renderorder":"right-down",

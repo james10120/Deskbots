@@ -4,7 +4,7 @@
  "layers":[
         {
          "compression":"zlib",
-         "data":"eJxjYKAOyMGDiVFDKibGHfRUg00dMWYgAwBmLhG5",
+         "data":"eJxjYKAOyMGDiVFDC0yMW6mlhly3IAMAx3wV8Q==",
          "encoding":"base64",
          "height":11,
          "id":10,
@@ -142,8 +142,36 @@
          "width":9,
          "x":0,
          "y":0
+        }, 
+        {
+         "compression":"zlib",
+         "data":"eJxjYBiaYDUTA8MaIF7LhMoeygAAOWUEFQ==",
+         "encoding":"base64",
+         "height":11,
+         "id":12,
+         "name":"overlay",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":9,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "compression":"zlib",
+         "data":"eJxjYBiaoI+RgaEfiCcA8TsmBob3QPyBiXb2NTFiZyODSYzY2cQCAC0HBrA=",
+         "encoding":"base64",
+         "height":11,
+         "id":11,
+         "name":"overlay",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":9,
+         "x":0,
+         "y":0
         }],
- "nextlayerid":11,
+ "nextlayerid":13,
  "nextobjectid":1,
  "orientation":"orthogonal",
  "renderorder":"right-down",

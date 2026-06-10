@@ -22,6 +22,7 @@ const SCALE := 1.5
 const POLL_SEC := 0.4          # 多久掃一次 sessions 資料夾
 const FRAME_DUR := 0.14        # 每幀動畫秒數
 const WALK_SPEED := 120.0      # 走動速度 px/s
+const PLAYER_SPEED := 95.0     # 玩家角色走動速度 px/s
 
 # 工作座位（來自 Tiled 地圖的格座標 col,row；face=面向 down/up）
 const SEATS := [
@@ -67,6 +68,7 @@ var _astar: AStarGrid2D
 var _bot_tex := {}   # 角色名 -> Texture2D（BOT1~BOT9）
 var _dragging := false
 var _drag_off := Vector2i()
+var _player := {}        # 玩家可控角色（WASD/方向鍵走動）
 var _selected := ""           # 被點選顯示進度的 session
 var _detail_win: Window       # 大型進度視窗（獨立 OS 視窗）
 var _detail_text: RichTextLabel
@@ -133,6 +135,7 @@ func _ready() -> void:
 		_debug_mode = true       # 持續顯示座標格線（不自動關），供讀座位/休息室座標
 		_draw_grid()
 		return
+	_make_player()
 	_scan()   # 立即掃一次
 
 func _process(delta: float) -> void:
@@ -149,6 +152,7 @@ func _process(delta: float) -> void:
 	# 行為（移動）+ 動畫
 	for sid in _robots:
 		_update_robot(_robots[sid], delta)
+	_update_player(delta)
 	# 大型進度視窗：開著就定期刷新內容
 	if _selected != "" and _robots.has(_selected) and _detail_win.visible:
 		_detail_t -= delta
@@ -323,16 +327,13 @@ func _update_robot(r, delta: float) -> void:
 		r.last_target = r.target
 		r.path = _compute_path(r.pos, r.target)
 		r.path_i = 0
-	# 取下一個路徑點當即時目標
+	# 緊貼路徑點：朝目前路徑點走，到了才換下一個（嚴格沿格子走道，不抄近路）
 	var step: Vector2 = r.target
-	while r.path_i < r.path.size():
+	if r.path_i < r.path.size():
 		step = r.path[r.path_i]
-		if r.pos.distance_to(step) < 8.0:
+		if r.pos.distance_to(step) < 2.0:
 			r.path_i += 1
-		else:
-			break
-	if r.path_i >= r.path.size():
-		step = r.target
+			step = r.path[r.path_i] if r.path_i < r.path.size() else r.target
 	# 3) 朝即時目標移動（用最終目標距離判斷是否到達）
 	var to: Vector2 = step - r.pos
 	if r.pos.distance_to(r.target) > 3.0 and to.length() > 0.5:
@@ -426,6 +427,8 @@ func _upsert(data: Dictionary) -> void:
 		node.add_child(spr)
 		var lbl := Label.new()
 		lbl.position = Vector2(-16, -FRAME_H * SCALE * 0.5 - 12)   # 角色頭上名牌
+		lbl.z_index = 4000        # 名牌永遠在 overlay 之上
+		lbl.z_as_relative = false
 		lbl.add_theme_font_size_override("font_size", 8)
 		node.add_child(lbl)
 		add_child(node)
@@ -456,6 +459,63 @@ func _upsert(data: Dictionary) -> void:
 	var _lf: Font = r.label.get_theme_font("font")
 	if _lf != null:
 		r.label.position.x = -_lf.get_string_size(project, HORIZONTAL_ALIGNMENT_LEFT, -1, 8).x * 0.5 - 2
+
+func _make_player() -> void:
+	var node := Node2D.new()
+	var spr := Sprite2D.new()
+	spr.region_enabled = true
+	spr.texture = _bot_tex.get("BOT1", null)
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.scale = Vector2(SCALE, SCALE)
+	node.add_child(spr)
+	var lbl := Label.new()
+	lbl.text = "你"
+	lbl.add_theme_font_size_override("font_size", 9)
+	lbl.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
+	lbl.add_theme_stylebox_override("normal", _name_bg())
+	lbl.position = Vector2(-7, -FRAME_H * SCALE * 0.5 - 22)
+	lbl.z_index = 4000
+	lbl.z_as_relative = false
+	node.add_child(lbl)
+	add_child(node)
+	var start := _tile_px(6, 5)   # 通道，保證可走
+	node.position = start
+	_player = {"node": node, "sprite": spr, "pos": start, "dir": 3, "t": 0.0}
+
+func _update_player(delta: float) -> void:
+	if _player.is_empty():
+		return
+	var v := Vector2.ZERO
+	if Input.is_action_pressed("ui_right") or Input.is_physical_key_pressed(KEY_D): v.x += 1
+	if Input.is_action_pressed("ui_left") or Input.is_physical_key_pressed(KEY_A): v.x -= 1
+	if Input.is_action_pressed("ui_down") or Input.is_physical_key_pressed(KEY_S): v.y += 1
+	if Input.is_action_pressed("ui_up") or Input.is_physical_key_pressed(KEY_W): v.y -= 1
+	var moving: bool = v != Vector2.ZERO
+	if moving:
+		v = v.normalized()
+		var step: Vector2 = v * PLAYER_SPEED * delta
+		var p: Vector2 = _player.pos
+		if _walkable_px(Vector2(p.x + step.x, p.y)):  # 分軸判斷，可沿牆滑行
+			p.x += step.x
+		if _walkable_px(Vector2(p.x, p.y + step.y)):
+			p.y += step.y
+		_player.pos = p
+		if abs(v.x) > abs(v.y):
+			_player.dir = 0 if v.x > 0 else 2
+		else:
+			_player.dir = 1 if v.y < 0 else 3
+	_player.node.position = _player.pos
+	_player.node.z_index = int(_player.pos.y + FRAME_H * SCALE * 0.5)
+	var row := ROW_WALK if moving else ROW_IDLE
+	_player.t += delta
+	var frame := int(_player.t / FRAME_DUR) % 6
+	_player.sprite.region_rect = Rect2((int(_player.dir) * 6 + frame) * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+
+func _walkable_px(pos: Vector2) -> bool:
+	if _astar == null:
+		return true
+	var foot := pos + Vector2(0, FRAME_H * SCALE * 0.25)   # 用腳底判斷格子
+	return not _astar.is_point_solid(_world_to_cell(foot))
 
 func _name_bg() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -504,7 +564,7 @@ func _load_map() -> void:
 		if img != null:
 			tsets.append({"firstgid": int(ts["firstgid"]), "columns": int(ts["columns"]),
 				"tex": ImageTexture.create_from_image(img)})
-	# 逐格畫；最底層當地板（永遠在後），其餘家具/牆依「列 Y」排序，跟機器人一起前後遮擋
+	# 逐格畫；地板永遠最底，其餘家具依「列 Y」排序、與角色腳底 Y 比前後
 	var li := 0
 	for L in m["layers"]:
 		var data = L["data"]
@@ -530,10 +590,35 @@ func _load_map() -> void:
 			spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			spr.scale = Vector2(SCALE, SCALE)
 			spr.position = Vector2(col * tw, row * tw) * SCALE
-			# Y-Sort：地板永遠最底；其餘家具依「格底 Y」排序，與角色腳底 Y 比前後
+			# Y-Sort：地板永遠最底；家具依「格底 Y」排序，與角色腳底 Y 比前後
 			spr.z_index = -4096 if li == 0 else int((row + 1) * 16 * SCALE)
 			add_child(spr)
 		li += 1
+	# overlay：使用者標記「永遠畫在角色前面」的瓦片（z=3000，角色之上、名牌之下）
+	var ov = m.get("overlay", [])
+	for idx in range(ov.size()):
+		var gid := int(ov[idx])
+		if gid <= 0:
+			continue
+		var ts = _pick_tileset(tsets, gid)
+		if ts == null:
+			continue
+		var local := gid - int(ts["firstgid"])
+		var cols := int(ts["columns"])
+		@warning_ignore("integer_division")
+		var sy := (local / cols) * tw
+		@warning_ignore("integer_division")
+		var row := idx / _map_w
+		var spr := Sprite2D.new()
+		spr.texture = ts["tex"]
+		spr.region_enabled = true
+		spr.region_rect = Rect2((local % cols) * tw, sy, tw, tw)
+		spr.centered = false
+		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		spr.scale = Vector2(SCALE, SCALE)
+		spr.position = Vector2((idx % _map_w) * tw, row * tw) * SCALE
+		spr.z_index = 3000
+		add_child(spr)
 	# 障礙格用 bake_map.py 算好的 solid（含地板層的牆 + 上層家具）
 	var solid := {}
 	var sgrid = m.get("solid", [])
@@ -549,7 +634,7 @@ func _build_astar(solid: Dictionary) -> void:
 	_astar.region = Rect2i(0, 0, _map_w, _map_h)
 	_astar.cell_size = Vector2(16 * SCALE, 16 * SCALE)
 	_astar.offset = Vector2(8 * SCALE, 8 * SCALE)   # 對齊格中心
-	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER   # 只走上下左右，嚴格沿格子走道
 	_astar.update()
 	for c in solid:
 		_astar.set_point_solid(c, true)

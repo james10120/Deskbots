@@ -686,10 +686,10 @@ func _build_usage_window() -> void:
 	# 半透明圓角卡片
 	var card := PanelContainer.new()
 	var csb := StyleBoxFlat.new()
-	csb.bg_color = Color(0.10, 0.11, 0.15, 0.86)
+	csb.bg_color = Color(0.10, 0.11, 0.15, 0.62)   # 更透，看得到後面的桌面
 	csb.set_corner_radius_all(14)
 	csb.set_border_width_all(1)
-	csb.border_color = Color(0.26, 0.30, 0.42, 0.9)
+	csb.border_color = Color(0.26, 0.30, 0.42, 0.7)
 	csb.set_content_margin_all(12)
 	card.add_theme_stylebox_override("panel", csb)
 	outer.add_child(card)
@@ -715,7 +715,7 @@ func _build_usage_window() -> void:
 	pin.tooltip_text = "釘選看板：永遠置頂（與地圖分開）"
 	pin.focus_mode = Control.FOCUS_NONE
 	pin.add_theme_font_size_override("font_size", 12)
-	pin.toggled.connect(func(on): _usage_win.always_on_top = on)
+	pin.toggled.connect(_set_usage_pin)
 	headrow.add_child(pin)
 	var xbtn := Button.new()
 	xbtn.text = "✕"
@@ -746,6 +746,20 @@ func _build_usage_window() -> void:
 	# 預設開在地圖右側
 	_usage_win.position = get_window().position + Vector2i(get_window().size.x + 8, 0)
 	_usage_win.visible = true
+
+func _set_usage_pin(on: bool) -> void:
+	# 對「顯示中」的透明分層視窗直接切 always_on_top，Windows 會重建視窗樣式，
+	# per-pixel 透明的點擊判定會壞掉（整窗穿透、釘選鈕點不到）。
+	# 安全作法：先藏 → 切旗標 → 重套透明 → 再顯示（位置大小原樣保留）。
+	var pos := _usage_win.position
+	var sz := _usage_win.size
+	_usage_win.hide()
+	_usage_win.always_on_top = on
+	_usage_win.transparent_bg = true
+	_usage_win.set_flag(Window.FLAG_TRANSPARENT, true)
+	_usage_win.show()
+	_usage_win.position = pos
+	_usage_win.size = sz
 
 func _on_usage_header_drag(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -828,7 +842,7 @@ func _usage_card(sid: String, project: String, col: Color, u) -> Control:
 	var card := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	# 被點選的 session 卡片高亮邊框，呼應對話框正在看的對象
-	sb.bg_color = Color(0.17, 0.20, 0.28, 1.0) if sid == _selected else Color(0.14, 0.15, 0.20, 1.0)
+	sb.bg_color = Color(0.17, 0.20, 0.28, 0.78) if sid == _selected else Color(0.14, 0.15, 0.20, 0.72)
 	if sid == _selected:
 		sb.set_border_width_all(1)
 		sb.border_color = Color(0.45, 0.6, 0.95, 1.0)
@@ -931,11 +945,11 @@ func _rehire_row(d: Dictionary) -> Control:
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	btn.add_theme_font_size_override("font_size", 12)
 	var nsb := StyleBoxFlat.new()
-	nsb.bg_color = Color(0.16, 0.22, 0.30, 1.0)
+	nsb.bg_color = Color(0.16, 0.22, 0.30, 0.8)
 	nsb.set_corner_radius_all(7)
 	nsb.set_content_margin_all(7)
 	var hsb := nsb.duplicate()
-	hsb.bg_color = Color(0.22, 0.32, 0.44, 1.0)
+	hsb.bg_color = Color(0.22, 0.32, 0.44, 0.9)
 	btn.add_theme_stylebox_override("normal", nsb)
 	btn.add_theme_stylebox_override("hover", hsb)
 	btn.add_theme_stylebox_override("pressed", nsb)

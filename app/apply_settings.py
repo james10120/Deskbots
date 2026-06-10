@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")   # 否則 cp950 印不出 emoji
+except Exception:
+    pass
 
 SETTINGS = Path.home() / ".claude" / "settings.json"
 EMIT = "py D:/Work/FunAI/app/emit.py"

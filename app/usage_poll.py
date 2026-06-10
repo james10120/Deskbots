@@ -28,7 +28,10 @@ except Exception:
 
 POLL_SEC = 2.0
 USAGE_FILE = states.RUNTIME_DIR / "usage.json"
+REHIRE_FILE = states.RUNTIME_DIR / "rehire.json"   # 人才庫：可重新雇用的歷史專案
 LOCK_FILE = states.RUNTIME_DIR / "usage.lock"
+PROJECTS_DIR = Path.home() / ".claude" / "projects"
+REHIRE_MAX = 8          # 人才庫最多列幾個專案
 
 _lock_handle = None   # 全域持有，鎖才不會在函式返回後被釋放
 
@@ -127,11 +130,10 @@ def _update_session(sid: str, transcript: str) -> dict | None:
 
 def _scan_once() -> None:
     sessions_dir = states.SESSIONS_DIR
-    if not sessions_dir.exists():
-        return
     out: dict[str, dict] = {}
     seen: set[str] = set()
-    for f in sessions_dir.glob("*.json"):
+    active_cwds: set[str] = set()
+    for f in (sessions_dir.glob("*.json") if sessions_dir.exists() else []):
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -140,6 +142,9 @@ def _scan_once() -> None:
         if not sid:
             continue
         seen.add(sid)
+        cwd = str(d.get("cwd", "")).strip()
+        if cwd:
+            active_cwds.add(_norm_cwd(cwd))
         st = _update_session(sid, str(d.get("transcript", "")))
         if st is None:
             continue
@@ -154,12 +159,80 @@ def _scan_once() -> None:
     for sid in list(_acc.keys()):
         if sid not in seen:
             _acc.pop(sid, None)
-    tmp = USAGE_FILE.with_suffix(".json.tmp")
+    _write_json(USAGE_FILE, out)
+    _scan_rehire(active_cwds)
+
+
+def _norm_cwd(p: str) -> str:
+    return p.replace("/", "\\").rstrip("\\").lower()
+
+
+def _project_cwd(proj_dir: Path):
+    """從某專案資料夾最新的 transcript 抓真實 cwd + 最後活動時間。"""
+    files = sorted(proj_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if not files:
+        return None
+    latest = files[0]
+    cwd = ""
+    try:
+        with latest.open(encoding="utf-8") as fh:
+            for _ in range(40):                 # cwd 通常在開頭幾行
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if o.get("cwd"):
+                    cwd = str(o["cwd"])
+                    break
+    except OSError:
+        return None
+    if not cwd:
+        return None
+    return {"cwd": cwd, "mtime": latest.stat().st_mtime}
+
+
+def _scan_rehire(active_cwds: set) -> None:
+    """掃 ~/.claude/projects，列出「最近用過但目前沒在跑」的專案 → 人才庫。"""
+    if not PROJECTS_DIR.exists():
+        return
+    cands = []
+    for proj in PROJECTS_DIR.glob("*"):
+        if not proj.is_dir():
+            continue
+        info = _project_cwd(proj)
+        if info is None:
+            continue
+        if _norm_cwd(info["cwd"]) in active_cwds:   # 正在上工的不列
+            continue
+        cands.append(info)
+    cands.sort(key=lambda c: c["mtime"], reverse=True)
+    now = time.time()
+    rows = []
+    for c in cands[:REHIRE_MAX]:
+        cwd = c["cwd"]
+        name = cwd.replace("/", "\\").rstrip("\\").split("\\")[-1] or cwd
+        rows.append({"project": name, "cwd": cwd, "ago": _ago(now - c["mtime"])})
+    _write_json(REHIRE_FILE, rows)
+
+
+def _ago(sec: float) -> str:
+    if sec < 3600:
+        return "%d 分鐘前" % max(1, int(sec / 60))
+    if sec < 86400:
+        return "%d 小時前" % int(sec / 3600)
+    return "%d 天前" % int(sec / 86400)
+
+
+def _write_json(path, data) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
     try:
         states.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         import os
-        os.replace(tmp, USAGE_FILE)
+        os.replace(tmp, path)
     except OSError:
         pass
 

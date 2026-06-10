@@ -17,8 +17,8 @@ const USAGE_W := 260            # 看板視窗寬
 const USAGE_MIN_H := 220        # 看板最小高（拉高把手的下限）
 const CONTEXT_MAX := 200000.0   # 負荷量表的分母（context 上限；超過=超出負荷）
 const USAGE_REFRESH := 1.0      # 看板多久刷新一次（秒）
-const DEPARTED_FILE := "D:/Work/FunAI/runtime/departed.json"
-const DEPARTED_MAX := 8         # 人才庫（離職名單）最多記幾筆
+# 人才庫：可重新雇用的歷史專案（由 usage_poll.py 掃 ~/.claude/projects 寫出）
+const REHIRE_FILE := "D:/Work/FunAI/runtime/rehire.json"
 # 負荷比例 → 遊戲字眼（由低到高，取第一個達標的）
 const LOAD_WORDS := [
 	[0.30, "游刃有餘", Color(0.55, 0.85, 0.60)],
@@ -95,6 +95,7 @@ var _selected := ""           # 被點選顯示進度的 session
 var _detail_win: Window       # 大型進度視窗（獨立 OS 視窗）
 var _detail_text: RichTextLabel
 var _detail_header: Label
+var _detail_input: LineEdit   # 送訊息/指令給該 session 的輸入框
 var _detail_t := 0.0          # 刷新計時
 var _detail_dragging := false
 var _detail_drag_off := Vector2i()
@@ -105,7 +106,7 @@ var _usage_t := 0.0            # 看板刷新計時
 var _usage_dragging := false
 var _usage_drag_off := Vector2i()
 var _usage_resizing := false   # 拖底部把手調整高度中
-var _departed: Array = []      # 人才庫：離職 session [{project, cwd}]，可重新雇用
+var _departed: Array = []      # 人才庫：可重新雇用的歷史專案 [{project, cwd, ago}]
 
 func _input(event: InputEvent) -> void:
 	# 左鍵：點機器人→顯示進度氣泡；點空白→拖曳整個視窗
@@ -149,6 +150,31 @@ func _focus_selected_terminal() -> void:
 	if hw != 0:
 		OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw)])
 	_on_detail_close()   # 叫出終端後對話卡就功成身退，自動關閉
+
+func _btn_style(c: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c
+	sb.set_corner_radius_all(9)
+	sb.set_content_margin_all(10)
+	return sb
+
+func _send_detail_input() -> void:
+	if _detail_input == null:
+		return
+	var t := _detail_input.text.strip_edges()
+	if t == "":
+		return
+	_send_to_selected(t)
+	_detail_input.clear()
+
+func _send_to_selected(text: String) -> void:
+	# 聚焦該 session 的終端 → 鍵盤注入文字 + Enter（送訊息或 /clear 等斜線指令）
+	if _selected == "" or not _robots.has(_selected) or text == "":
+		return
+	var hw := int(_robots[_selected].get("hwnd", 0))
+	if hw == 0:
+		return
+	OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw), "--send", text])
 
 func _build_file_dialog() -> void:
 	_file_dialog = FileDialog.new()
@@ -208,7 +234,6 @@ func _ready() -> void:
 		_draw_grid()
 		return
 	_make_player()
-	_load_departed()
 	_build_usage_window()
 	_make_pin_button()
 	_build_file_dialog()
@@ -337,19 +362,51 @@ func _build_detail_window() -> void:
 	_detail_text.add_theme_font_size_override("normal_font_size", 15)
 	_detail_text.add_theme_constant_override("line_separation", 3)
 	inner.add_child(_detail_text)
-	# 底部：呼叫對應終端（給 TAB 聚焦不到時用）
+	# 送訊息/指令給這個 session（聚焦其終端 → 鍵盤注入文字 + Enter）
+	var inrow := HBoxContainer.new()
+	inrow.add_theme_constant_override("separation", 8)
+	vbox.add_child(inrow)
+	_detail_input = LineEdit.new()
+	_detail_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出）"
+	_detail_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_detail_input.add_theme_font_size_override("font_size", 14)
+	_detail_input.text_submitted.connect(func(_t): _send_detail_input())
+	inrow.add_child(_detail_input)
+	var sbtn := Button.new()
+	sbtn.text = "送出"
+	sbtn.focus_mode = Control.FOCUS_NONE
+	sbtn.add_theme_font_size_override("font_size", 14)
+	sbtn.add_theme_stylebox_override("normal", _btn_style(Color(0.20, 0.44, 0.34)))
+	sbtn.add_theme_stylebox_override("hover", _btn_style(Color(0.26, 0.54, 0.42)))
+	sbtn.add_theme_stylebox_override("pressed", _btn_style(Color(0.20, 0.44, 0.34)))
+	sbtn.add_theme_color_override("font_color", Color(0.92, 1.0, 0.95))
+	sbtn.pressed.connect(_send_detail_input)
+	inrow.add_child(sbtn)
+	# 快捷指令列
+	var qrow := HBoxContainer.new()
+	qrow.add_theme_constant_override("separation", 8)
+	vbox.add_child(qrow)
+	for q in [["/clear", "/clear"], ["/compact", "/compact"], ["⎋ 中斷", "<ESC>"]]:
+		var qb := Button.new()
+		qb.text = q[0]
+		qb.tooltip_text = "送出 %s 給這個 session" % q[1]
+		qb.focus_mode = Control.FOCUS_NONE
+		qb.add_theme_font_size_override("font_size", 13)
+		qb.add_theme_stylebox_override("normal", _btn_style(Color(0.22, 0.24, 0.32)))
+		qb.add_theme_stylebox_override("hover", _btn_style(Color(0.30, 0.33, 0.43)))
+		qb.add_theme_stylebox_override("pressed", _btn_style(Color(0.22, 0.24, 0.32)))
+		qb.add_theme_color_override("font_color", Color(0.88, 0.92, 1.0))
+		var cmd: String = q[1]
+		qb.pressed.connect(func(): _send_to_selected(cmd))
+		qrow.add_child(qb)
+	# 呼叫對應終端視窗（給 TAB 聚焦不到時用）
 	var fbtn := Button.new()
 	fbtn.text = "▸ 呼叫這個 session 的終端視窗"
-	fbtn.add_theme_font_size_override("font_size", 15)
-	var nsb := StyleBoxFlat.new()
-	nsb.bg_color = Color(0.20, 0.34, 0.52, 1.0)
-	nsb.set_corner_radius_all(9)
-	nsb.set_content_margin_all(10)
-	var hsb := nsb.duplicate()
-	hsb.bg_color = Color(0.26, 0.42, 0.62, 1.0)
-	fbtn.add_theme_stylebox_override("normal", nsb)
-	fbtn.add_theme_stylebox_override("hover", hsb)
-	fbtn.add_theme_stylebox_override("pressed", nsb)
+	fbtn.focus_mode = Control.FOCUS_NONE
+	fbtn.add_theme_font_size_override("font_size", 14)
+	fbtn.add_theme_stylebox_override("normal", _btn_style(Color(0.20, 0.34, 0.52)))
+	fbtn.add_theme_stylebox_override("hover", _btn_style(Color(0.26, 0.42, 0.62)))
+	fbtn.add_theme_stylebox_override("pressed", _btn_style(Color(0.20, 0.34, 0.52)))
 	fbtn.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
 	fbtn.pressed.connect(_focus_selected_terminal)
 	vbox.add_child(fbtn)
@@ -539,10 +596,9 @@ func _scan() -> void:
 					_upsert(data)
 			fname = dir.get_next()
 		dir.list_dir_end()
-	# 移除已離場（檔案消失）的角色 → 記入人才庫供重新雇用
+	# 移除已離場（檔案消失）的角色
 	for sid in _robots.keys():
 		if not seen.has(sid):
-			_record_departed(_robots[sid])
 			_robots[sid].node.queue_free()
 			_robots.erase(sid)
 
@@ -556,10 +612,9 @@ func _upsert(data: Dictionary) -> void:
 	var t_age := 1.0e9
 	if tp != "" and FileAccess.file_exists(tp):
 		t_age = now - float(FileAccess.get_modified_time(tp))
-	# 殭屍：transcript 很久沒動、事件也舊 → session 已死，移除機器人（記入人才庫）
+	# 殭屍：transcript 很久沒動、事件也舊 → session 已死，移除機器人
 	if t_age > ZOMBIE_SEC and age > ZOMBIE_SEC:
 		if _robots.has(sid):
-			_record_departed(_robots[sid])
 			_robots[sid].node.queue_free()
 			_robots.erase(sid)
 		return
@@ -621,7 +676,6 @@ func _upsert(data: Dictionary) -> void:
 	r.transcript = str(data.get("transcript", ""))
 	r.cwd = str(data.get("cwd", ""))
 	r.hwnd = int(data.get("hwnd", 0))
-	_unrecord_departed(r.cwd)   # 回來上班了 → 從人才庫移除
 	r.label.text = project
 	r.label.add_theme_color_override("font_color", STATE_COLOR.get(state, Color.WHITE))
 	r.label.add_theme_stylebox_override("normal", _name_bg())
@@ -776,6 +830,7 @@ func _refresh_usage() -> void:
 	var usage = _read_json(USAGE_FILE)
 	if usage == null:
 		usage = {}
+	_load_departed()   # 重新讀人才庫（usage_poll 每 2s 更新）
 	for c in _usage_box.get_children():
 		c.queue_free()
 	# 依座位序排在場 session，畫面穩定不跳動
@@ -821,7 +876,7 @@ func _refresh_usage() -> void:
 		l2.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
 		tot.add_child(l2)
 		_usage_box.add_child(tot)
-	# 人才庫：離職的 session，一鍵重新雇用（claude -c 接續上次對話）
+	# 人才庫：近期用過、目前沒在跑的專案，一鍵重新雇用（claude -c 接續上次對話）
 	if _departed.size() > 0:
 		_usage_box.add_child(HSeparator.new())
 		var dh := Label.new()
@@ -939,7 +994,8 @@ func _fmt_tok(n: int) -> String:
 # ── 人才庫（離職名單 + 重新雇用）────────────────────────────────
 func _rehire_row(d: Dictionary) -> Control:
 	var btn := Button.new()
-	btn.text = "↻ %s" % str(d.get("project", "?"))
+	var ago := str(d.get("ago", ""))
+	btn.text = "↻ %s   %s" % [str(d.get("project", "?")), ago]
 	btn.tooltip_text = "重新雇用：在 %s 開新終端、接續上次對話 (claude -c)" % str(d.get("cwd", ""))
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -964,44 +1020,18 @@ func _rehire(cwd: String) -> void:
 		return
 	OS.create_process("cmd.exe", ["/c", "D:\\Work\\FunAI\\app\\launch_claude.cmd", cwd, "-c"])
 
-func _record_departed(r) -> void:
-	# 機器人離場（SessionEnd / 殭屍）→ 記入人才庫；同資料夾只留最新一筆
-	var cwd := str(r.get("cwd", ""))
-	if cwd == "":
-		return
-	for i in range(_departed.size()):
-		if str(_departed[i].get("cwd", "")) == cwd:
-			_departed.remove_at(i)
-			break
-	_departed.insert(0, {"project": str(r.get("project", "?")), "cwd": cwd})
-	while _departed.size() > DEPARTED_MAX:
-		_departed.pop_back()
-	_save_departed()
-
-func _unrecord_departed(cwd: String) -> void:
-	# 同資料夾的 session 回來上班了 → 從人才庫移除
-	if cwd == "":
-		return
-	for i in range(_departed.size()):
-		if str(_departed[i].get("cwd", "")) == cwd:
-			_departed.remove_at(i)
-			_save_departed()
-			return
-
-func _save_departed() -> void:
-	var f := FileAccess.open(DEPARTED_FILE, FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify(_departed))
-		f.close()
-
 func _load_departed() -> void:
-	var f := FileAccess.open(DEPARTED_FILE, FileAccess.READ)
+	# 人才庫由 usage_poll.py 掃 ~/.claude/projects 寫出（近期用過、目前沒在跑的專案）
+	var j = _read_json_any(REHIRE_FILE)
+	_departed = j if j is Array else []
+
+func _read_json_any(path: String):
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
-		return
+		return null
 	var j = JSON.parse_string(f.get_as_text())
 	f.close()
-	if j is Array:
-		_departed = j
+	return j
 
 func _make_player() -> void:
 	var node := Node2D.new()

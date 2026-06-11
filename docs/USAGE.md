@@ -1,109 +1,126 @@
-# 使用手冊
+# User Guide
 
-安裝見 [README](../README.md)；本文講開起來之後怎麼用。
+**English** | [繁體中文](USAGE.zh-TW.md)
+
+Installation is covered in the [README](../README.md); this guide is about using the map
+once it's running.
 
 ---
 
-## 1. 啟動模式
+## 1. Launch modes
 
-| 模式 | 怎麼開 | hooks | 關閉時 |
-|------|--------|-------|--------|
-| **乾淨模式**（推薦） | 雙擊 `app\run_deskbots.cmd` | 開啟時自動裝 | 自動還原全域設定、停背景行程、清 runtime |
-| **常駐模式** | 先跑一次 `py app\apply_settings.py`，之後雙擊 `app\start_map.cmd` | 一直裝著 | 只停背景行程，設定不動 |
+| Mode | How | Hooks | On close |
+|------|-----|-------|----------|
+| **Clean mode** (recommended) | double-click `app\run_deskbots.cmd` | installed automatically on launch | global settings restored, background daemons stopped, runtime cleaned |
+| **Resident mode** | run `py app\apply_settings.py` once, then double-click `app\start_map.cmd` | stay installed | daemons stopped only, settings untouched |
 
-- 要被觀察的 Claude session 請在**地圖開啟後**才啟動（hwnd 在 SessionStart 抓一次就黏住）。
-- 萬一啟動器視窗被強殺、設定沒還原：跑 `py app\apply_settings.py --remove`。
-- 想讓 statusline / hooks 立即生效到「已開著」的 session：重開那個 session。
+- Start the Claude sessions you want to watch **after** the map is open (the terminal
+  hwnd is captured once at SessionStart and sticks).
+- If the launcher window gets force-killed before restoring: run
+  `py app\apply_settings.py --remove` once.
+- For sessions that were already open, restart them to pick up the hooks/statusline.
 
-## 2. 機器人狀態
+## 2. Robot states
 
-| Claude 事件 | 狀態 | 機器人行為 | 名牌色 |
-|------------|------|-----------|--------|
-| UserPromptSubmit | thinking | 在座位 | 藍 |
-| PreToolUse / 輸出中 | working | 在座位工作 | 綠 |
-| Notification（要授權） | waiting | 走到等待區滑手機 | **黃（最該看）** |
-| Stop | done → idle | 走去休息室看書 | 綠 → 灰 |
-| PostToolUse 出錯 | error | 在座位 | 紅 |
-| SessionEnd / transcript 久未動 | 離場 | 機器人消失 | — |
+| Claude event | State | Robot behaviour | Nameplate |
+|--------------|-------|-----------------|-----------|
+| UserPromptSubmit | thinking | at its desk | blue |
+| PreToolUse / actively outputting | working | working at its desk | green |
+| Notification (permission needed) | waiting | phone-scrolling in the waiting area | **yellow (look here!)** |
+| Stop | done → idle | reading on the lounge couch | green → gray |
+| PostToolUse with an error | error | at its desk | red |
+| SessionEnd / transcript stale | leaves | robot disappears | — |
 
-中斷偵測：Claude Code 沒有中斷 hook，靠 transcript 檔的 mtime 當心跳（停止更新 → 回 idle）。
+Interrupt detection: Claude Code has no interrupt hook, so the transcript file's mtime is
+used as a heartbeat (stops updating → back to idle).
 
-## 3. 地圖操作
+## 3. Map controls
 
-- **點機器人** → 開/關對話卡
-- **點空椅子** → 選資料夾，開新 PowerShell 跑 `claude`（新 session 入座）
-- **按住空白處拖曳** → 移動整張地圖
-- **WASD / 方向鍵** → 移動「你」的角色（純散步）
-- 右上角：**設定** / **看板** / **釘選**（地圖永遠置頂）
+- **Click a robot** → open/close its chat card
+- **Click an empty chair** → pick a folder, a new PowerShell window runs `claude` there
+  (the new session takes that seat)
+- **Drag empty floor** → move the whole map window
+- **WASD / arrow keys** → walk your own character around (purely cosmetic)
+- Top-right buttons: **設定 (settings)** / **看板 (board)** / **釘選 (pin map always-on-top)**
 
-視窗位置、置頂狀態、看板高度與顯示等會自動記住（`runtime/ui_state.json`），下次開啟還原。
+Window positions, pin state, board height/visibility are remembered
+(`runtime/ui_state.json`) and restored on the next launch.
 
-## 4. 對話卡（點機器人）
+## 4. Chat card (click a robot)
 
-- 顯示該 session **最近一輪 Q&A**（含工具呼叫摘要）
-- 輸入框送訊息（Enter 送出、Shift+Enter 換行）；快捷鈕 `/clear`、`/compact`、`⎋中斷`
-- **▸ 呼叫終端**：把該 session 的終端視窗叫到最前
-- 送訊息原理是「聚焦終端 + 鍵盤注入」，所以**遠端 session 只顯示內容**，
-  按鈕變成「▸ 在 VS Code 開啟」直達該機該資料夾
-- 顯示「無可用終端」的原因與對策見 [ARCHITECTURE §5](ARCHITECTURE.md#5-失敗模式對話卡顯示無可用終端)
+- Shows the session's **latest Q&A round** (including tool-call summaries)
+- Input box sends a message (Enter to send, Shift+Enter for newline); quick buttons for
+  `/clear`, `/compact`, `⎋ interrupt`
+- **▸ Summon terminal**: brings that session's terminal window to the front
+- Sending works by focusing the terminal and injecting keystrokes, so **remote sessions
+  are view-only** — the button becomes **▸ Open in VS Code**, landing on the right
+  machine and folder
+- For the "no usable terminal" cases and fixes, see
+  [ARCHITECTURE §5](ARCHITECTURE.md) (zh-TW)
 
-## 5. 工作看板
+## 5. Usage board
 
-- 每個在場 session 一張卡：**負荷量表**（context 佔用，越滿越紅）、LV（隨產出成長）、
-  ⚒ 產出 / 📖 閱讀 token、🔁 回合數；點卡片＝開該 session 對話卡
-- 底部「**拖此調整高度**」把手；標題列 📌 釘選看板（與地圖置頂分開）
-- **人才庫**：近期用過、目前沒在跑的專案（本地＋各遠端機器合併、依最後活動排序）
-  - 點本地列 → 開新 PowerShell `claude -c` 接續上次對話（重新雇用）
-  - 點遠端列（`專案@機器`）→ 開 VS Code Remote 直達該工作目錄
-  - **✕ 移除**：從人才庫拿掉；該專案之後有新活動會自動回來
+- One card per live session: **context-load gauge** (the fuller, the redder), LV (grows
+  with output), ⚒ output / 📖 read tokens, 🔁 turns; click a card to open its chat card
+- Bottom grip drags the board taller; 📌 in the title bar pins the board on top
+  (independent of the map pin)
+- **Rehire list** — recently used, currently-not-running projects (local + every remote
+  machine, merged, sorted by last activity):
+  - click a local row → new PowerShell with `claude -c` (resume last conversation)
+  - click a remote row (`project@machine`) → VS Code Remote at that working directory
+  - **✕ remove**: hides the entry; it returns automatically when that project has new
+    activity
 
-## 6. 設定卡
+## 6. Settings card
 
-- **地圖永遠置頂**（與右上「釘選」同步）、**顯示/隱藏工作看板**
-- **SSH 伺服器**：
-  - 清單：綠點＝已連線＋在場 session 數；**VS Code** 鈕開該機的 Remote 視窗；✕ 從清單移除
-  - 新增：輸入 `user@ip`（或 ssh 別名）→ **＋ 連線安裝** → 跳出終端視窗自動完成
-    金鑰產生/推送（輸一次該機密碼）→ 部署 agent + hooks → 登記。**不用重開地圖**，
-    橋接會熱載入，該機 session 機器人自動出現
-- **⏻ 離開遊戲**：關閉地圖；乾淨模式下啟動器接著自動還原環境
+- **Map always-on-top** (synced with the top-right pin button), **show/hide board**
+- **SSH servers**:
+  - list shows a green dot when connected plus the live session count; **VS Code** opens
+    a Remote window to that machine; ✕ removes it from the list
+  - add: type `user@ip` (or an ssh alias) → **＋ 連線安裝** — a terminal window opens and
+    does everything: generate/push an SSH key (you type the server password once), deploy
+    the remote agent + hooks, register the server. **No map restart needed** — the bridge
+    hot-reloads and the robots walk in
+- **⏻ Quit**: closes the map; in clean mode the launcher then restores your environment
 
-SSH 指令版與需求：
+SSH via CLI, and requirements:
 
 ```
-py app\remote_install.py user@ip --bootstrap [--label 短名]   # 安裝（label 顯示在名牌）
-py app\remote_install.py user@ip --remove                     # 卸載遠端 hooks
+py app\remote_install.py user@ip --bootstrap [--label name]   # install (label shows on nameplates)
+py app\remote_install.py user@ip --remove                     # uninstall remote hooks
 ```
 
-遠端需求：Linux/macOS、python3、sshd；本地 `ssh user@ip` 必須金鑰免密碼（bootstrap 自動設定）。
+Remote machine: Linux/macOS, python3, sshd. Local `ssh user@ip` must be passwordless key
+auth (bootstrap sets this up for you).
 
-## 7. Debug 旗標
+## 7. Debug flags
 
 ```
-godot --path godot -- --grid    # 顯示格線 + S/W/L 錨點標記（座位/等待/休息）
-godot --path godot -- --shot    # 跑 1 秒自動截圖（地圖/看板/開著的卡片）後退出
-godot --path godot -- --bot     # 角色表檢視
+godot --path godot -- --grid    # tile grid + S/W/L anchor markers (seat/wait/lounge)
+godot --path godot -- --shot    # run 1s, auto-screenshot (map/board/open cards), exit
+godot --path godot -- --bot     # character sheet viewer
 ```
 
-打包版同樣支援：`godot\Deskbots.exe -- --grid`。
+The packaged build supports the same: `godot\Deskbots.exe -- --grid`.
 
-## 8. runtime/ 檔案一覽（全部 gitignored）
+## 8. runtime/ files (all gitignored)
 
-| 檔案 | 誰寫 | 內容 |
-|------|------|------|
-| `sessions/<id>.json` | emit.py / ssh_bridge | 每個 session 的狀態（遠端的檔名為 `<label>__<id>`） |
-| `usage.json` | usage_poll | 各 session token 用量 |
-| `rehire.json` / `rehire_remote.json` | usage_poll / ssh_bridge | 本地 / 遠端人才庫 |
-| `rehire_hidden.json` | 看板 ✕ | 人才庫移除名單（跨次保留） |
-| `ui_state.json` | main.gd | 視窗位置/置頂/看板狀態（跨次保留） |
-| `bridge.json` | ssh_bridge | 各伺服器連線狀態（設定卡綠點） |
-| `transcripts/` | ssh_bridge | 遠端 transcript 尾段快取（對話卡/心跳用） |
+| File | Writer | Contents |
+|------|--------|----------|
+| `sessions/<id>.json` | emit.py / ssh_bridge | per-session state (remote ones are named `<label>__<id>`) |
+| `usage.json` | usage_poll | per-session token usage |
+| `rehire.json` / `rehire_remote.json` | usage_poll / ssh_bridge | local / remote rehire lists |
+| `rehire_hidden.json` | board ✕ | rehire removals (survives restarts) |
+| `ui_state.json` | main.gd | window positions/pin/board state (survives restarts) |
+| `bridge.json` | ssh_bridge | per-server connection status (settings card dots) |
+| `transcripts/` | ssh_bridge | cached remote transcript tails (chat card / heartbeat) |
 
-## 9. 疑難排解
+## 9. Troubleshooting
 
-| 症狀 | 原因 / 解法 |
-|------|------------|
-| 機器人沒出現 | session 在地圖開啟**前**就開了 → 重開該 session；或 hooks 沒裝（跑 `py app\apply_settings.py`） |
-| 對話卡「無可用終端」 | 見 [ARCHITECTURE §5](ARCHITECTURE.md)；VS Code 整合終端抓不準，用啟動器/空椅開的獨立 PowerShell 最穩 |
-| 遠端伺服器灰點（未連線） | `ssh user@ip` 是否免密碼？遠端有 `python3`？防火牆？看 bridge 視窗的重連訊息 |
-| 中文變亂碼 | 終端切 UTF-8（啟動器已自動 `PYTHONUTF8=1`） |
-| 想徹底移除 | `py app\apply_settings.py --remove`（本地）＋ `py app\remote_install.py <host> --remove`（各遠端），刪掉整個資料夾即可，不留任何系統殘留 |
+| Symptom | Cause / fix |
+|---------|-------------|
+| No robot appears | session was started **before** the map → restart that session; or hooks not installed (`py app\apply_settings.py`) |
+| Chat card says "no usable terminal" | see [ARCHITECTURE §5](ARCHITECTURE.md); VS Code integrated terminals are unreliable — standalone PowerShell windows (the launcher / empty-chair flow) work best |
+| Server dot stays gray | is `ssh user@ip` passwordless? does the remote have `python3`? firewall? check the bridge window's reconnect log |
+| Garbled CJK output | switch the terminal to UTF-8 (the launcher already sets `PYTHONUTF8=1`) |
+| Full uninstall | `py app\apply_settings.py --remove` (local) + `py app\remote_install.py <host> --remove` (each remote), then delete the folder — nothing else is left on the system |

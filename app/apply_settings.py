@@ -1,8 +1,8 @@
 """把 statusLine + 輕量 hooks 併入／移出使用者全域 ~/.claude/settings.json。
 
 由使用者自己執行（Claude 的工具被安全機制擋住修改該檔）：
-    py D:\\Work\\FunAI\\app\\apply_settings.py            # 套用
-    py D:\\Work\\FunAI\\app\\apply_settings.py --remove   # 移除（乾淨卸載）
+    py D:\\Work\\Deskbots\\app\\apply_settings.py            # 套用
+    py D:\\Work\\Deskbots\\app\\apply_settings.py --remove   # 移除（乾淨卸載）
 
 兩個方向都是 idempotent 且**非破壞性**：
   - 套用：只補上 FunAI 的 statusLine 與這幾個事件的 emit hook，保留你原有的其他 hook。
@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -36,8 +37,17 @@ STATUSLINE = _cmd("statusline.py")
 EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd"]
 
 
+def _is_ours_cmd(cmd, script_name: str) -> bool:
+    """本工具的指令——不限安裝位置：形如 `py <path>/app/<script_name> ...`。
+    設定裡只該有「目前安裝位置」的條目；其他位置（改名/搬移/複製留下的）一律視為
+    自己的舊條目，套用與移除時都要清掉，否則 hook 會重複執行或指到死路徑。"""
+    if not isinstance(cmd, str):
+        return False
+    return bool(re.match(r'^py\s+"?[^"]*[/\\]app[/\\]' + re.escape(script_name) + r'"?(\s|$)', cmd))
+
+
 def _is_funai_cmd(cmd) -> bool:
-    return isinstance(cmd, str) and cmd.startswith(EMIT)
+    return _is_ours_cmd(cmd, "emit.py")
 
 
 def _strip_funai_groups(arr) -> list:
@@ -82,10 +92,15 @@ def apply() -> None:
     if data is None:
         return
     # statusLine 是單一值，會蓋掉既有的 → 先把非 FunAI 的原值記下，移除時還原
+    # （任何安裝位置的舊 statusline.py 都是我們自己的，不記、也順手清掉記錄鍵）
     prev_sl = data.get("statusLine")
-    if isinstance(prev_sl, dict) and prev_sl.get("command") != STATUSLINE:
+    if (isinstance(prev_sl, dict) and prev_sl.get("command") != STATUSLINE
+            and not _is_ours_cmd(prev_sl.get("command"), "statusline.py")):
         data["_funaiPrevStatusLine"] = prev_sl
     data["statusLine"] = {"type": "command", "command": STATUSLINE}
+    rec = data.get("_funaiPrevStatusLine")
+    if isinstance(rec, dict) and _is_ours_cmd(rec.get("command"), "statusline.py"):
+        data.pop("_funaiPrevStatusLine", None)
     hooks = data.setdefault("hooks", {})
     for ev in EVENTS:
         arr = _strip_funai_groups(hooks.get(ev, []))   # 先去掉舊的 FunAI 條目（避免重複/更新）

@@ -60,6 +60,8 @@ var _board: UsageBoard
 var _settings: SettingsWindow
 var _file_dialog: FileDialog   # 點空椅 → 選資料夾 → 開新 PowerShell+claude
 var _pin_btn: Button           # 右上角釘選鈕（與設定卡的置頂開關同步）
+var _hook_hint: Label          # hook 未安裝時的畫面提示（有 session 就自動隱藏）
+var _hooks_ok := true          # 啟動時偵測：~/.claude/settings.json 是否含本工具的 hook
 
 
 func _ready() -> void:
@@ -104,6 +106,7 @@ func _ready() -> void:
 	_make_player()
 	_build_windows()
 	_make_corner_buttons()
+	_make_hook_hint()     # hook 未安裝 → 畫面提示（多半是直接點 exe 而非 run_deskbots.cmd）
 	_restore_ui_state()   # 還原上次的視窗位置/置頂/看板狀態（runtime/ui_state.json）
 	_build_file_dialog()
 	_scan()   # 立即掃一次
@@ -141,6 +144,56 @@ func _build_windows() -> void:
 	_settings.quit_requested.connect(func():
 		_save_ui_state()   # 離開前把最終視窗狀態寫進 ui_state.json
 		get_tree().quit())
+
+
+func _make_hook_hint() -> void:
+	# 偵測 hook 是否已裝進 ~/.claude/settings.json；沒裝就在畫面中央給明確指引。
+	_hooks_ok = _hook_installed()
+	var cl := CanvasLayer.new()
+	add_child(cl)
+	_hook_hint = Label.new()
+	_hook_hint.text = "尚未偵測到 Claude Code hook\n\n請改用  run_deskbots.cmd  啟動（會自動安裝），\n或先執行一次  py app\\apply_settings.py，\n再開新的 Claude session。"
+	_hook_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hook_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_hook_hint.add_theme_font_size_override("font_size", 15)
+	_hook_hint.add_theme_color_override("font_color", Color(1.0, 0.92, 0.7))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.09, 0.07, 0.86)
+	sb.set_corner_radius_all(10)
+	sb.set_content_margin_all(16)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(0.8, 0.6, 0.3, 0.7)
+	_hook_hint.add_theme_stylebox_override("normal", sb)
+	var hint_size := Vector2(380, 130)
+	_hook_hint.size = hint_size
+	_hook_hint.position = (Vector2(get_window().size) - hint_size) * 0.5
+	_hook_hint.visible = not _hooks_ok
+	cl.add_child(_hook_hint)
+
+
+func _hook_installed() -> bool:
+	# 讀全域 settings.json，看 hooks 裡有沒有任一 command 指向 emit.py（不限安裝位置）
+	var home := OS.get_environment("USERPROFILE")
+	if home == "":
+		home = OS.get_environment("HOME")
+	if home == "":
+		return true   # 拿不到家目錄就不誤報
+	var j = Util.read_json(home + "/.claude/settings.json")
+	if typeof(j) != TYPE_DICTIONARY:
+		return false
+	var hooks = j.get("hooks", {})
+	if typeof(hooks) != TYPE_DICTIONARY:
+		return false
+	for ev in hooks:
+		if typeof(hooks[ev]) != TYPE_ARRAY:
+			continue
+		for grp in hooks[ev]:
+			if typeof(grp) != TYPE_DICTIONARY:
+				continue
+			for h in grp.get("hooks", []):
+				if typeof(h) == TYPE_DICTIONARY and str(h.get("command", "")).contains("emit.py"):
+					return true
+	return false
 
 
 func _make_corner_buttons() -> void:
@@ -182,6 +235,9 @@ func _process(delta: float) -> void:
 	if not _debug_mode and _poll_t >= POLL_SEC:
 		_poll_t = 0.0
 		_scan()
+	# hook 未安裝的提示：一旦有機器人（hook 顯然有效）就收起來
+	if _hook_hint != null:
+		_hook_hint.visible = not _hooks_ok and _robots.is_empty()
 	if _shot:
 		_shot_t += delta
 		if _shot_t > 1.0:

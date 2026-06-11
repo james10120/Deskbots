@@ -84,7 +84,8 @@ func load_map() -> void:
 	# 讀 bake_map.py 烘焙好的 map_baked.json，照圖層渲染整間辦公室
 	var f := FileAccess.open(Paths.TILED_DIR + "map_baked.json", FileAccess.READ)
 	if f == null:
-		push_error("找不到 map_baked.json，請先跑 bake_map.py")
+		push_warning("map_baked.json 不存在 → 使用內建預設佈局（不黑屏）")
+		_default_layout()
 		return
 	var m = JSON.parse_string(f.get_as_text())
 	f.close()
@@ -187,6 +188,30 @@ func load_map() -> void:
 			@warning_ignore("integer_division")
 			var row := idx / map_w
 			solid[Vector2i(idx % map_w, row)] = true
+	_build_astar(solid)
+
+
+func _default_layout() -> void:
+	# 連 map_baked.json 都沒有時的最終保險：一間 17×11 預設辦公室（程式生成畫風）。
+	# 永不黑屏；使用者跑過 bake_map.py（run_deskbots 會跑）後就改用正式佈局。
+	map_w = 17
+	map_h = 11
+	_seats = [
+		{"col": 6, "row": 5, "face": "down", "lounge": [2, 4], "wait": [6, 3]},
+		{"col": 9, "row": 5, "face": "down", "lounge": [3, 4], "wait": [9, 3]},
+		{"col": 6, "row": 8, "face": "up", "lounge": [2, 7], "wait": [7, 3]},
+		{"col": 9, "row": 8, "face": "up", "lounge": [3, 7], "wait": [8, 3]},
+	]
+	var solid := {}
+	for c in range(map_w):
+		solid[Vector2i(c, 0)] = true
+		solid[Vector2i(c, 1)] = true
+		solid[Vector2i(c, 2)] = true
+		solid[Vector2i(c, map_h - 1)] = true
+	for r in range(map_h):
+		solid[Vector2i(0, r)] = true
+		solid[Vector2i(map_w - 1, r)] = true
+	_paint_fallback(solid)
 	_build_astar(solid)
 
 

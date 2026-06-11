@@ -62,6 +62,8 @@ var _file_dialog: FileDialog   # 點空椅 → 選資料夾 → 開新 PowerShel
 var _pin_btn: Button           # 右上角釘選鈕（與設定卡的置頂開關同步）
 var _hook_hint: Label          # hook 未安裝時的畫面提示（有 session 就自動隱藏）
 var _hooks_ok := true          # 啟動時偵測：~/.claude/settings.json 是否含本工具的 hook
+var _managed := false          # 被 run_deskbots.ps1 託管（外部已裝 hook/起背景）→ 不自管生命週期
+var _bg_pids: Array = []       # 自管模式啟動的背景行程（usage_poll / ssh_bridge）
 
 
 func _ready() -> void:
@@ -106,7 +108,12 @@ func _ready() -> void:
 	_make_player()
 	_build_windows()
 	_make_corner_buttons()
-	_make_hook_hint()     # hook 未安裝 → 畫面提示（多半是直接點 exe 而非 run_deskbots.cmd）
+	# 直接雙擊 exe（非託管、非截圖）→ 自己管理生命週期：裝 hook、起背景、退出還原
+	_managed = _has_arg("--managed")
+	if not _shot and not _managed:
+		get_tree().set_auto_accept_quit(false)   # 攔截關閉 → 先還原再退出
+		_bootstrap()
+	_make_hook_hint()     # hook 未安裝 → 畫面提示（_bootstrap 後通常已裝好）
 	_restore_ui_state()   # 還原上次的視窗位置/置頂/看板狀態（runtime/ui_state.json）
 	_build_file_dialog()
 	_scan()   # 立即掃一次
@@ -141,9 +148,7 @@ func _build_windows() -> void:
 	_settings.add_server_requested.connect(_add_server)
 	_settings.vscode_requested.connect(_open_vscode)
 	_settings.remove_server_requested.connect(_remove_server)
-	_settings.quit_requested.connect(func():
-		_save_ui_state()   # 離開前把最終視窗狀態寫進 ui_state.json
-		get_tree().quit())
+	_settings.quit_requested.connect(_quit)
 
 
 func _make_hook_hint() -> void:
@@ -499,9 +504,42 @@ func _pos_on_screen(p: Vector2i, sz: Vector2i) -> bool:
 
 
 func _notification(what: int) -> void:
-	# Alt+F4 等 OS 關閉路徑也把最終狀態寫進去（平常每 2s 已存，這是保險）
+	# 視窗關閉鈕 / Alt+F4 → 走統一退出流程（存狀態 + 自管模式還原環境）
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and _board != null and not _shot:
-		_save_ui_state()
+		_quit()
+
+
+# ── 自管生命週期（直接雙擊 Deskbots.exe）──────────────────────────
+func _bootstrap() -> void:
+	# 裝 hook（同步，要在使用者開 session 前完成）+ 清殭屍 + 起背景輪詢
+	OS.execute("py", [Paths.APP_DIR + "/apply_settings.py"], [])
+	OS.execute("py", [Paths.APP_DIR + "/clean_sessions.py"], [])
+	for script in ["usage_poll.py", "ssh_bridge.py"]:
+		var pid := OS.create_process("py", [Paths.APP_DIR + "/" + script])
+		if pid > 0:
+			_bg_pids.append(pid)
+	_hooks_ok = true   # 剛裝好，畫面不顯示「未安裝」提示
+
+
+func _quit() -> void:
+	_save_ui_state()
+	# 停背景行程（py.exe 會生 python 子行程，taskkill /T 連子帶孫清乾淨）
+	for pid in _bg_pids:
+		OS.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
+	_bg_pids.clear()
+	if not _managed:
+		# 還原全域設定 + 清自己的 runtime 暫存（與 run_deskbots.ps1 的 finally 一致）
+		OS.execute("py", [Paths.APP_DIR + "/apply_settings.py", "--remove"], [])
+		var d := DirAccess.open(Paths.SESSIONS_DIR)
+		if d != null:
+			d.list_dir_begin()
+			var f := d.get_next()
+			while f != "":
+				if f.ends_with(".json"):
+					d.remove(Paths.SESSIONS_DIR + "/" + f)
+				f = d.get_next()
+		DirAccess.remove_absolute(Paths.USAGE_FILE)
+	get_tree().quit()
 
 
 func _build_file_dialog() -> void:

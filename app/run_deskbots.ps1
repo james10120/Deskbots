@@ -64,10 +64,11 @@ try {
                             -WindowStyle Minimized -PassThru
 
     Write-Host '== 啟動地圖 —— 關閉地圖視窗即會自動還原環境 =='
+    # --managed：本腳本已裝 hook、起背景、收尾 → 地圖不要自己再管一次生命週期
     if ((Split-Path $Godot -Leaf) -eq 'Deskbots.exe') {
-        Start-Process -FilePath $Godot -Wait                # 打包版：專案已內嵌
+        Start-Process -FilePath $Godot -ArgumentList '--', '--managed' -Wait      # 打包版：專案已內嵌
     } else {
-        Start-Process -FilePath $Godot -ArgumentList '--path', (Join-Path $Root 'godot') -Wait
+        Start-Process -FilePath $Godot -ArgumentList '--path', (Join-Path $Root 'godot'), '--', '--managed' -Wait
     }
 }
 finally {

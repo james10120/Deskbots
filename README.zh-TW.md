@@ -63,15 +63,18 @@ git clone https://github.com/james10120/Deskbots.git && cd Deskbots
 （選用：放入 LimeZu 素材 PNG 升級成完整像素風 — assets/README.md）
 ```
 
-**乾淨模式（推薦）**：雙擊 **`app\run_deskbots.cmd`**。
-開啟時自動把 hooks/statusLine 併入全域設定，**關閉地圖後自動還原、停背景行程、清 runtime**
-（`try/finally` 保證收尾；萬一視窗被強殺，跑一次 `py app\apply_settings.py --remove` 手動還原）。
+**直接雙擊 `godot\Deskbots.exe`**（打包版）即可。它會自管完整生命週期：開啟時自動把
+hooks/statusLine 併入全域設定，**關閉地圖後自動還原、停背景行程、清 runtime**，背景輪詢也由它自己起停。
 要被觀察的 Claude session 請在**地圖開啟後**才啟動。
+（萬一 exe 被強殺來不及還原，跑一次 `py app\apply_settings.py --remove`；安裝是 idempotent，下次開啟也會自動重清。）
+
+**`app\run_deskbots.cmd`** 做同樣的事，但走 PowerShell 的 `try/finally`，連崩潰都保證收尾——
+想要這層保險、或從原始碼跑（沒有打包 exe）時用它。
 
 **常駐模式**：先跑一次 `py app\apply_settings.py`（idempotent、會備份 `.bak`），
 之後雙擊 **`app\start_map.cmd`** 只開地圖、關閉不動全域設定。卸載：`py app\apply_settings.py --remove`。
 
-啟動器找 Godot 的順序：`godot\Deskbots.exe`（打包版）→ 環境變數 `DESKBOTS_GODOT` → PATH → 常見安裝位置。
+`run_deskbots.cmd` 找 Godot 的順序：`godot\Deskbots.exe`（打包版）→ 環境變數 `DESKBOTS_GODOT` → PATH → 常見安裝位置。
 
 ## 打包成免安裝應用
 

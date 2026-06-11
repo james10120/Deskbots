@@ -1,0 +1,28 @@
+# 執行期狀態 / 截圖 / 備份
+runtime/
+
+# Python 產生物
+__pycache__/
+*.pyc
+
+# Godot 編輯器快取
+.godot/
+
+# Tiled 烘焙產生物（由 bake_map.py 產生，可重生）
+assets/tiled/map_baked.json
+
+# LimeZu 素材（授權禁止再散布，不入庫；取得方式見 assets/README.md）
+assets/characters/*.png
+assets/tiled/*.png
+assets/Modern tiles_Free/
+
+# 匯出/打包產物（app/package.ps1 產生）
+godot/Deskbots.exe
+godot/Deskbots.console.exe
+dist/
+
+# Claude Code 本機設定
+.claude/
+
+# 本機的 SSH 伺服器清單（remote_install.py 產生；範本見 servers.example.json）
+config/servers.json

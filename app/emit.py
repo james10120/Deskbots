@@ -1,8 +1,8 @@
 """Claude Code hook 進入點。
 
-用法（在 settings.json 的 hook command 裡）：
-    python D:/Work/FunAI/app/emit.py <EVENT>
-例如 PreToolUse 的 command 就寫 `python .../emit.py PreToolUse`。
+用法（在 settings.json 的 hook command 裡，路徑由 apply_settings.py 動態填入安裝位置）：
+    py <安裝路徑>/app/emit.py <EVENT>
+例如 PreToolUse 的 command 就寫 `py .../emit.py PreToolUse`。
 
 職責：讀 stdin 的 hook JSON → 算出狀態 → 寫 runtime/sessions/<id>.json。
 鐵則：絕不拋例外、絕不阻塞、永遠 exit 0 —— 不能干擾真正的 Claude Code。

@@ -1,7 +1,7 @@
 """Claude Code statusLine 進入點。
 
-用法（settings.json）：
-    "statusLine": { "type": "command", "command": "python D:/Work/FunAI/app/statusline.py" }
+用法（settings.json，路徑由 apply_settings.py 動態填入安裝位置）：
+    "statusLine": { "type": "command", "command": "py <安裝路徑>/app/statusline.py" }
 
 讀自己 session 的 stdin → 顯示「本 session 機器人狀態」+「其他 session 概況」。
 最實用：一眼看出有沒有別的專案在等你授權 (🙋waiting)。

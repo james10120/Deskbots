@@ -22,8 +22,15 @@ except Exception:
     pass
 
 SETTINGS = Path.home() / ".claude" / "settings.json"
-EMIT = "py D:/Work/FunAI/app/emit.py"
-STATUSLINE = "py D:/Work/FunAI/app/statusline.py"
+
+# hook 指令要寫絕對路徑（Claude 從任意 cwd 觸發），但路徑由「本檔所在位置」動態算出，
+# 不寫死 → 整包可裝在任何電腦的任何路徑。含空白的路徑用引號包起來。
+_APP = Path(__file__).resolve().parent
+def _cmd(script: str) -> str:
+    p = str(_APP / script).replace("\\", "/")
+    return f'py "{p}"' if " " in p else f"py {p}"
+EMIT = _cmd("emit.py")
+STATUSLINE = _cmd("statusline.py")
 
 # PreToolUse 讓「用工具的回合」狀態完全準（emit.py 對它走精簡路徑，每次 ~37ms）
 EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd"]

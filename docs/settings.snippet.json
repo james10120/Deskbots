@@ -1,30 +1,30 @@
 {
-  "_comment": "把 hooks 與 statusLine 合併進 ~/.claude/settings.json（全域，涵蓋所有專案）。事件名以指令參數傳給 emit.py。",
+  "_comment": "把 hooks 與 statusLine 合併進 ~/.claude/settings.json（全域）。<安裝路徑> 換成你放本專案的實際路徑；或直接跑 py app/apply_settings.py 自動填入。事件名以指令參數傳給 emit.py。",
   "statusLine": {
     "type": "command",
-    "command": "py D:/Work/FunAI/app/statusline.py"
+    "command": "py <安裝路徑>/app/statusline.py"
   },
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py SessionStart" } ] }
+      { "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py SessionStart" } ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py UserPromptSubmit" } ] }
+      { "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py UserPromptSubmit" } ] }
     ],
     "PreToolUse": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py PreToolUse" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py PreToolUse" } ] }
     ],
     "PostToolUse": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py PostToolUse" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py PostToolUse" } ] }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py Notification" } ] }
+      { "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py Notification" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py Stop" } ] }
+      { "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py Stop" } ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "py D:/Work/FunAI/app/emit.py SessionEnd" } ] }
+      { "hooks": [ { "type": "command", "command": "py <安裝路徑>/app/emit.py SessionEnd" } ] }
     ]
   }
 }

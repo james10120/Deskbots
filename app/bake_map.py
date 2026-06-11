@@ -12,7 +12,8 @@ import struct
 import zlib
 from pathlib import Path
 
-TILED_DIR = Path(r"D:\Work\FunAI\assets\tiled")
+# 安裝根目錄＝本檔(app/)的上一層；整包可搬到任意位置
+TILED_DIR = Path(__file__).resolve().parent.parent / "assets" / "tiled"
 
 # 由左到右的模組組裝順序（檔名不含 .tmj）
 COMPOSITION = [

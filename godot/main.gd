@@ -8,9 +8,12 @@ const ROW_IDLE := 1    # 第2列：站著待機（4 向×6）
 const ROW_WALK := 2    # 第3列：走路（4 向×6）
 const ROW_PHONE := 6   # 第7列：等待滑手機（12 格，正面）
 const ROW_READ := 7    # 第8列：休息看書（12 格，正面）
-const SESSIONS_DIR := "D:/Work/FunAI/runtime/sessions"
-const USAGE_FILE := "D:/Work/FunAI/runtime/usage.json"
-const TILED_DIR := "D:/Work/FunAI/assets/tiled/"
+# 安裝根目錄＝Godot 專案(res://)的上一層；全部路徑由它推出，可整包搬到任意位置
+var ROOT_DIR := ProjectSettings.globalize_path("res://..").rstrip("/")
+var ROOT_WIN := ROOT_DIR.replace("/", "\\")   # 給 cmd.exe 用的反斜線版
+var SESSIONS_DIR := ROOT_DIR + "/runtime/sessions"
+var USAGE_FILE := ROOT_DIR + "/runtime/usage.json"
+var TILED_DIR := ROOT_DIR + "/assets/tiled/"
 
 # 工作看板（獨立視窗，遊戲化呈現：負荷量表 + LV + 產出/閱讀/回合 + 人才庫）
 const USAGE_W := 260            # 看板視窗寬
@@ -18,7 +21,7 @@ const USAGE_MIN_H := 220        # 看板最小高（拉高把手的下限）
 const CONTEXT_MAX := 200000.0   # 負荷量表的分母（context 上限；超過=超出負荷）
 const USAGE_REFRESH := 1.0      # 看板多久刷新一次（秒）
 # 人才庫：可重新雇用的歷史專案（由 usage_poll.py 掃 ~/.claude/projects 寫出）
-const REHIRE_FILE := "D:/Work/FunAI/runtime/rehire.json"
+var REHIRE_FILE := ROOT_DIR + "/runtime/rehire.json"
 # 負荷比例 → 遊戲字眼（由低到高，取第一個達標的）
 const LOAD_WORDS := [
 	[0.30, "游刃有餘", Color(0.55, 0.85, 0.60)],
@@ -151,7 +154,7 @@ func _focus_selected_terminal() -> void:
 	if hw == 0:
 		_flash_hint()
 		return
-	OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw)])
+	OS.create_process("py", [ROOT_DIR + "/app/winfocus.py", str(hw)])
 	# 不自動關對話卡：叫出終端後通常還要繼續送訊息／下指令
 
 func _flash_hint() -> void:
@@ -189,7 +192,7 @@ func _send_to_selected(text: String) -> void:
 	if hw == 0:
 		_flash_hint()
 		return
-	OS.create_process("py", ["D:/Work/FunAI/app/winfocus.py", str(hw), "--send", text])
+	OS.create_process("py", [ROOT_DIR + "/app/winfocus.py", str(hw), "--send", text])
 
 func _build_file_dialog() -> void:
 	_file_dialog = FileDialog.new()
@@ -202,7 +205,7 @@ func _build_file_dialog() -> void:
 
 func _on_folder_selected(path: String) -> void:
 	# 在選的資料夾開一個新 PowerShell 視窗並啟動 claude（引號處理交給 .cmd，最穩）
-	OS.create_process("cmd.exe", ["/c", "D:\\Work\\FunAI\\app\\launch_claude.cmd", path])
+	OS.create_process("cmd.exe", ["/c", ROOT_WIN + "\\app\\launch_claude.cmd", path])
 
 func _empty_seat_at(mp: Vector2) -> bool:
 	# 點到「沒有機器人佔用的座位」→ 觸發開新 session
@@ -219,7 +222,7 @@ func _empty_seat_at(mp: Vector2) -> bool:
 
 func _set_app_icon() -> void:
 	# 視窗 / 工作列圖示用 Deskbots LOGO（素材在 res:// 外，走絕對路徑載入）
-	var img := Image.load_from_file("D:/Work/FunAI/assets/icon.png")
+	var img := Image.load_from_file(ROOT_DIR + "/assets/icon.png")
 	if img != null:
 		DisplayServer.set_icon(img)
 
@@ -237,7 +240,7 @@ func _ready() -> void:
 	_shot = OS.get_cmdline_args().has("--shot")
 	for i in range(1, 10):   # 載入 BOT1~BOT9（缺檔就略過）
 		var nm := "BOT%d" % i
-		var p := "D:/Work/FunAI/assets/characters/%s.png" % nm
+		var p := ROOT_DIR + ("/assets/characters/%s.png" % nm)
 		if not FileAccess.file_exists(p):
 			continue
 		var img := Image.load_from_file(p)
@@ -270,9 +273,9 @@ func _process(delta: float) -> void:
 	if _shot:
 		_shot_t += delta
 		if _shot_t > 1.0:
-			get_viewport().get_texture().get_image().save_png("D:/Work/FunAI/runtime/_shot.png")
+			get_viewport().get_texture().get_image().save_png(ROOT_DIR + "/runtime/_shot.png")
 			if _usage_win != null and _usage_win.visible:   # 看板是獨立視窗，另存一張
-				_usage_win.get_texture().get_image().save_png("D:/Work/FunAI/runtime/_shot_board.png")
+				_usage_win.get_texture().get_image().save_png(ROOT_DIR + "/runtime/_shot_board.png")
 			get_tree().quit()
 			return
 	# 行為（移動）+ 動畫
@@ -1059,7 +1062,7 @@ func _rehire(cwd: String) -> void:
 	# 重新雇用 = 在原資料夾開新 PowerShell、claude -c 接續上次對話
 	if cwd == "":
 		return
-	OS.create_process("cmd.exe", ["/c", "D:\\Work\\FunAI\\app\\launch_claude.cmd", cwd, "-c"])
+	OS.create_process("cmd.exe", ["/c", ROOT_WIN + "\\app\\launch_claude.cmd", cwd, "-c"])
 
 func _load_departed() -> void:
 	# 人才庫由 usage_poll.py 掃 ~/.claude/projects 寫出（近期用過、目前沒在跑的專案）
@@ -1289,7 +1292,7 @@ func _pick_tileset(tsets: Array, gid: int):
 	return best
 
 func _debug_bot() -> void:
-	var img := Image.load_from_file("D:/Work/FunAI/assets/characters/BOT1.png")
+	var img := Image.load_from_file(ROOT_DIR + "/assets/characters/BOT1.png")
 	if img == null:
 		return
 	var tex := ImageTexture.create_from_image(img)

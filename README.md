@@ -70,17 +70,22 @@ git clone https://github.com/james10120/Deskbots.git && cd Deskbots
 (optional: drop in the LimeZu asset PNGs for the full pixel-art look — assets/README.md)
 ```
 
-**Clean mode (recommended)** — double-click **`app\run_deskbots.cmd`**.
-Hooks/statusLine are merged into your global settings on launch and **automatically
-restored when you close the map** (guaranteed by `try/finally`; if the window gets
-force-killed, run `py app\apply_settings.py --remove` once).
-Start the Claude sessions you want to watch **after** the map is open.
+**Just double-click `godot\Deskbots.exe`** (packaged build). It self-manages the whole
+lifecycle: installs hooks/statusLine into your global settings on launch and
+**automatically restores them when you close the map**, and starts/stops the background
+pollers itself. Start the Claude sessions you want to watch **after** the map is open.
+(If the exe is force-killed before it can restore, run `py app\apply_settings.py --remove`
+once — installs are idempotent and the next launch re-cleans anyway.)
+
+**`app\run_deskbots.cmd`** does the same thing via PowerShell with a `try/finally` that
+guarantees cleanup even on a crash — use it if you prefer that safety, or are running from
+source without the packaged exe.
 
 **Resident mode** — run `py app\apply_settings.py` once (idempotent, makes a `.bak`),
 then double-click **`app\start_map.cmd`** to open just the map; global settings are left
 alone. Uninstall: `py app\apply_settings.py --remove`.
 
-The launcher finds Godot in this order: `godot\Deskbots.exe` (packaged) →
+`run_deskbots.cmd` finds Godot in this order: `godot\Deskbots.exe` (packaged) →
 `DESKBOTS_GODOT` env var → PATH → common install locations.
 
 ## Package as a standalone app

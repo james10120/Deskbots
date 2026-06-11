@@ -11,7 +11,8 @@ once it's running.
 
 | Mode | How | Hooks | On close |
 |------|-----|-------|----------|
-| **Clean mode** (recommended) | double-click `app\run_deskbots.cmd` | installed automatically on launch | global settings restored, background daemons stopped, runtime cleaned |
+| **Double-click the exe** (simplest) | double-click `godot\Deskbots.exe` | installed automatically on launch | global settings restored, daemons stopped, runtime cleaned (self-managed) |
+| **run_deskbots.cmd** | double-click `app\run_deskbots.cmd` | installed automatically on launch | same as above, but via PowerShell `try/finally` (cleanup guaranteed even on crash) |
 | **Resident mode** | run `py app\apply_settings.py` once, then double-click `app\start_map.cmd` | stay installed | daemons stopped only, settings untouched |
 
 - Start the Claude sessions you want to watch **after** the map is open (the terminal

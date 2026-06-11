@@ -10,7 +10,8 @@
 
 | 模式 | 怎麼開 | hooks | 關閉時 |
 |------|--------|-------|--------|
-| **乾淨模式**（推薦） | 雙擊 `app\run_deskbots.cmd` | 開啟時自動裝 | 自動還原全域設定、停背景行程、清 runtime |
+| **直接雙擊 exe**（最簡單） | 雙擊 `godot\Deskbots.exe` | 開啟時自動裝 | 自動還原全域設定、停背景行程、清 runtime（自管） |
+| **run_deskbots.cmd** | 雙擊 `app\run_deskbots.cmd` | 開啟時自動裝 | 同上，但走 PowerShell `try/finally`，連崩潰都保證收尾 |
 | **常駐模式** | 先跑一次 `py app\apply_settings.py`，之後雙擊 `app\start_map.cmd` | 一直裝著 | 只停背景行程，設定不動 |
 
 - 要被觀察的 Claude session 請在**地圖開啟後**才啟動（hwnd 在 SessionStart 抓一次就黏住）。

@@ -157,7 +157,7 @@ func _make_hook_hint() -> void:
 	var cl := CanvasLayer.new()
 	add_child(cl)
 	_hook_hint = Label.new()
-	_hook_hint.text = "尚未偵測到 Claude Code hook\n\n請改用  run_deskbots.cmd  啟動（會自動安裝），\n或先執行一次  py app\\apply_settings.py，\n再開新的 Claude session。"
+	_hook_hint.text = "尚未偵測到 Claude Code hook\n\n正常雙擊 Deskbots.exe 會自動安裝；若仍看到此訊息，\n多半是找不到 Python（py）——請先安裝 Python，\n或手動執行一次  py app\\apply_settings.py，\n再開新的 Claude session。"
 	_hook_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hook_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hook_hint.add_theme_font_size_override("font_size", 15)

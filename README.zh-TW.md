@@ -83,7 +83,7 @@ powershell -File app\package.ps1 -Version 1.0.0
 ```
 
 需要 Godot 4.6 編輯器 + 同版 export templates。產出 `dist\Deskbots-<版本>-win64.zip`，
-解壓 → 放素材 → 雙擊 `app\run_deskbots.cmd` 即用（不需安裝 Godot；Python 仍需要）。
+解壓 → 雙擊 `godot\Deskbots.exe` 即用（不需安裝 Godot；Python 仍需要）。打包版已內嵌烘好的地圖與加密素材，開箱即跑。
 
 ## SSH 多伺服器
 

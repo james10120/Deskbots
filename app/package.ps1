@@ -4,8 +4,7 @@
 #
 # 產物：
 #   godot\Deskbots.exe                  匯出的單檔遊戲（pck 內嵌）
-#   dist\Deskbots-<版本>-win64.zip      解壓即用：放好素材（見 assets\README.md）
-#                                       → 雙擊 app\run_deskbots.cmd
+#   dist\Deskbots-<版本>-win64.zip      解壓即用 → 雙擊 godot\Deskbots.exe
 #
 # 需求（打包機）：Godot 4.6 編輯器 + 對應版本 export templates。
 param([string]$Version = 'dev')
@@ -104,4 +103,4 @@ $Zip = Join-Path $Root "dist\Deskbots-$Version-win64.zip"
 Remove-Item $Zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path $Stage -DestinationPath $Zip
 Write-Host "== 完成：$Zip =="
-Write-Host '   使用者解壓後：1) 照 assets\README.md 放素材  2) 雙擊 app\run_deskbots.cmd'
+Write-Host '   使用者解壓後：雙擊 godot\Deskbots.exe 即可（選用：照 assets\README.md 放 LimeZu 素材升級畫質）'

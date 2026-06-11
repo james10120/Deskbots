@@ -5,8 +5,8 @@
     py D:\\Work\\Deskbots\\app\\apply_settings.py --remove   # 移除（乾淨卸載）
 
 兩個方向都是 idempotent 且**非破壞性**：
-  - 套用：只補上 FunAI 的 statusLine 與這幾個事件的 emit hook，保留你原有的其他 hook。
-  - 移除：只拿掉 FunAI 自己的那幾筆（命令含 emit.py），事件清空才刪 key。
+  - 套用：只補上 Deskbots 的 statusLine 與這幾個事件的 emit hook，保留你原有的其他 hook。
+  - 移除：只拿掉 Deskbots 自己的那幾筆（命令含 emit.py），事件清空才刪 key。
 執行前都會先備份成 settings.json.bak。
 """
 from __future__ import annotations
@@ -36,8 +36,10 @@ def _cmd(script: str) -> str:
 EMIT = _cmd("emit.py")
 STATUSLINE = _cmd("statusline.py")
 
-# PreToolUse 讓「用工具的回合」狀態完全準（emit.py 對它走精簡路徑，每次 ~37ms）
-EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd"]
+# PreToolUse 讓「用工具的回合」狀態完全準；PostToolUse 供錯誤偵測（emit.detect_error）。
+# 兩者 emit.py 都走精簡路徑（重用快取的 hwnd），每次 ~37ms。
+EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+          "Notification", "Stop", "SessionEnd"]
 
 
 def _is_ours_cmd(cmd, script_name: str) -> bool:
@@ -49,12 +51,12 @@ def _is_ours_cmd(cmd, script_name: str) -> bool:
     return bool(re.match(r'^(?:py|python3?)\s+"?[^"]*[/\\]app[/\\]' + re.escape(script_name) + r'"?(\s|$)', cmd))
 
 
-def _is_funai_cmd(cmd) -> bool:
+def _is_emit_cmd(cmd) -> bool:
     return _is_ours_cmd(cmd, "emit.py")
 
 
-def _strip_funai_groups(arr) -> list:
-    """從某事件的 hook 群組陣列中濾掉 FunAI 自己的條目，保留其他人的。"""
+def _strip_our_groups(arr) -> list:
+    """從某事件的 hook 群組陣列中濾掉 Deskbots 自己的條目，保留其他人的。"""
     if not isinstance(arr, list):
         return []
     out = []
@@ -64,13 +66,18 @@ def _strip_funai_groups(arr) -> list:
             continue
         inner = grp.get("hooks")
         if isinstance(inner, list):
-            kept = [h for h in inner if not (isinstance(h, dict) and _is_funai_cmd(h.get("command")))]
+            kept = [h for h in inner if not (isinstance(h, dict) and _is_emit_cmd(h.get("command")))]
             if not kept:
-                continue          # 整組都是 FunAI → 丟掉
+                continue          # 整組都是 Deskbots 的 → 丟掉
             grp = dict(grp)
             grp["hooks"] = kept
         out.append(grp)
     return out
+
+
+# 記錄「使用者原本的 statusLine」的鍵；_funaiPrevStatusLine 是改名前的舊鍵（讀到就遷移）
+PREV_SL_KEY = "_deskbotsPrevStatusLine"
+OLD_PREV_SL_KEY = "_funaiPrevStatusLine"
 
 
 def _load(backup: bool) -> dict | None:
@@ -94,19 +101,23 @@ def apply() -> None:
     data = _load(backup=True)
     if data is None:
         return
-    # statusLine 是單一值，會蓋掉既有的 → 先把非 FunAI 的原值記下，移除時還原
+    # 舊鍵遷移：改名前記錄的原 statusLine 搬到新鍵
+    if OLD_PREV_SL_KEY in data and PREV_SL_KEY not in data:
+        data[PREV_SL_KEY] = data.pop(OLD_PREV_SL_KEY)
+    data.pop(OLD_PREV_SL_KEY, None)
+    # statusLine 是單一值，會蓋掉既有的 → 先把非 Deskbots 的原值記下，移除時還原
     # （任何安裝位置的舊 statusline.py 都是我們自己的，不記、也順手清掉記錄鍵）
     prev_sl = data.get("statusLine")
     if (isinstance(prev_sl, dict) and prev_sl.get("command") != STATUSLINE
             and not _is_ours_cmd(prev_sl.get("command"), "statusline.py")):
-        data["_funaiPrevStatusLine"] = prev_sl
+        data[PREV_SL_KEY] = prev_sl
     data["statusLine"] = {"type": "command", "command": STATUSLINE}
-    rec = data.get("_funaiPrevStatusLine")
+    rec = data.get(PREV_SL_KEY)
     if isinstance(rec, dict) and _is_ours_cmd(rec.get("command"), "statusline.py"):
-        data.pop("_funaiPrevStatusLine", None)
+        data.pop(PREV_SL_KEY, None)
     hooks = data.setdefault("hooks", {})
     for ev in EVENTS:
-        arr = _strip_funai_groups(hooks.get(ev, []))   # 先去掉舊的 FunAI 條目（避免重複/更新）
+        arr = _strip_our_groups(hooks.get(ev, []))   # 先去掉自己的舊條目（避免重複/更新）
         arr.append({"hooks": [{"type": "command", "command": f"{EMIT} {ev}"}]})
         hooks[ev] = arr
     _save(data)
@@ -122,23 +133,23 @@ def remove() -> None:
     data = _load(backup=True)
     if data is None:
         return
-    # statusLine：只在它確實指向 FunAI 時處理；有記下的原值就還原
+    # statusLine：只在它確實指向 Deskbots 時處理；有記下的原值就還原（新舊鍵都認）
     sl = data.get("statusLine")
     if isinstance(sl, dict) and sl.get("command") == STATUSLINE:
-        prev = data.pop("_funaiPrevStatusLine", None)
+        prev = data.pop(PREV_SL_KEY, None) or data.pop(OLD_PREV_SL_KEY, None)
         if prev is not None:
             data["statusLine"] = prev      # 還原使用者原本的 statusLine
         else:
             data.pop("statusLine", None)
-    else:
-        data.pop("_funaiPrevStatusLine", None)   # 清掉殘留的記錄鍵
-    # hooks：濾掉 FunAI 條目，事件清空就刪 key
+    data.pop(PREV_SL_KEY, None)            # 清掉殘留的記錄鍵
+    data.pop(OLD_PREV_SL_KEY, None)
+    # hooks：濾掉 Deskbots 條目，事件清空就刪 key
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
         for ev in EVENTS:
             if ev not in hooks:
                 continue
-            arr = _strip_funai_groups(hooks.get(ev, []))
+            arr = _strip_our_groups(hooks.get(ev, []))
             if arr:
                 hooks[ev] = arr
             else:
@@ -146,7 +157,7 @@ def remove() -> None:
         if not hooks:
             data.pop("hooks", None)
     _save(data)
-    print(f"✅ 已從 {SETTINGS} 移除 FunAI 的 statusLine 與 hooks")
+    print(f"✅ 已從 {SETTINGS} 移除 Deskbots 的 statusLine 與 hooks")
     print("   你原有的其他設定都保留；備份在 settings.json.bak。")
 
 

@@ -27,6 +27,15 @@
    runtime/rehire.json          ← usage_poll.py 掃歷史專案，供「重新雇用」
    runtime/rehire_hidden.json   ← 看板 ✕ 移除的人才庫項目（該專案有新活動會自動回來）
    runtime/ui_state.json        ← 視窗位置/置頂/看板狀態（main.gd 每 2s 有變才寫，下次開啟還原）
+            ▲
+            │  SSH 多伺服器（ssh_bridge.py 常駐；config/servers.json 熱載入）
+   每台一條長連線：ssh <host> python3 ~/deskbots/app/remote_agent.py
+        ├ 遠端 agent：2s 一次 session 快照（狀態在遠端衰減、時間送 age 免時鐘偏差、
+        │             transcript 尾段有變才附）+ 30s 掃遠端 ~/.claude/projects
+        ├ 鏡像寫 runtime/sessions/<label>__<id>.json（專案名@label、hwnd=0）
+        ├ transcript 尾段落地 runtime/transcripts/ 並把路徑指過去 → 心跳/對話卡原樣生效
+        ├ runtime/bridge.json         ← 連線狀態（設定卡綠點/在場數）
+        └ runtime/rehire_remote.json  ← 遠端人才庫（點了開 VS Code Remote 直達資料夾）
             │
             │  Godot 每秒重讀
             ▼
@@ -154,6 +163,9 @@ start "Claude" powershell.exe -NoExit -Command "Set-Location -LiteralPath '%~1';
 | `app/states.py` | 共用：路徑、狀態定義、session 檔讀寫、時間衰減。零外部相依。 |
 | `app/winfocus.py` | Win32（純 ctypes）：`terminal_hwnd` 抓視窗、`focus` 聚焦、`send_text` 鍵盤注入。 |
 | `app/usage_poll.py` | 背景常駐：解析 transcript 算 token 用量（`usage.json`）、掃歷史專案（`rehire.json`）。 |
+| `app/ssh_bridge.py` | 背景常駐：每台伺服器一條 ssh 長連線，鏡像遠端 session；`servers.json` 熱載入。 |
+| `app/remote_agent.py` | 部署在遠端：串流該機 session 快照與近期專案給 bridge。 |
+| `app/remote_install.py` | 一鍵部署遠端（`--bootstrap` 含 SSH 金鑰設定）；`add_server.cmd` 為遊戲內入口。 |
 | `app/launch_claude.cmd` | 開新獨立 PowerShell 視窗跑 claude（含 `-c` 重新雇用）。ASCII-only。 |
 | `godot/main.gd` | 主迴圈：session 掃描與狀態機、角色行為、玩家、視窗訊號接線。 |
 | `godot/paths.gd` `util.gd` | 安裝路徑單一出處；JSON 讀寫／樣式／格式化共用小工具。 |

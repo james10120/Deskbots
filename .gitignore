@@ -11,8 +11,15 @@ __pycache__/
 # Tiled 烘焙產生物（由 bake_map.py 產生，可重生）
 assets/tiled/map_baked.json
 
-# 大型外部素材（可從 GameDev 資源重新取得，執行非必需）
+# LimeZu 素材（授權禁止再散布，不入庫；取得方式見 assets/README.md）
+assets/characters/*.png
+assets/tiled/*.png
 assets/Modern tiles_Free/
+
+# 匯出/打包產物（app/package.ps1 產生）
+godot/Deskbots.exe
+godot/Deskbots.console.exe
+dist/
 
 # Claude Code 本機設定
 .claude/

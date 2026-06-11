@@ -56,6 +56,12 @@ if ($HaveAssets) {
     Write-Host '== 本機沒有 LimeZu 素材 → 發行包用程式生成備援畫風 =='
 }
 
+# 預先烘焙地圖（map_baked.json）放進發行包：直接雙擊 exe 或 bake 失敗時也有地圖
+Write-Host '== 烘焙地圖 → assets\tiled\map_baked.json =='
+& py "$Root\app\bake_map.py"
+$Baked = Join-Path $Root 'assets\tiled\map_baked.json'
+if (-not (Test-Path $Baked)) { throw '地圖烘焙失敗（map_baked.json 未產生）' }
+
 Write-Host "== 匯出 godot\Deskbots.exe（$Godot）=="
 Remove-Item $Exe -Force -ErrorAction SilentlyContinue   # 確保拿到的是本次匯出的新檔
 # 匯出期間暫時把真實金鑰寫進 asset_key.gd（讓解密能力編進 exe），結束後還原占位版
@@ -88,6 +94,7 @@ Copy-Item "$Root\godot\Deskbots.exe" "$Stage\godot\"
 if (Test-Path $AssetsEnc) { Copy-Item $AssetsEnc "$Stage\godot\" }   # 內嵌加密素材
 Copy-Item "$Root\assets\README.md"   "$Stage\assets\"
 Copy-Item "$Root\assets\tiled\*.tmj" "$Stage\assets\tiled\"
+Copy-Item $Baked "$Stage\assets\tiled\"   # 預烘地圖：免使用者端 bake 也能顯示
 Copy-Item "$Root\assets\icon.png"    "$Stage\assets\"
 Copy-Item "$Root\config\servers.example.json" "$Stage\config\"
 Copy-Item "$Root\docs\*.md" "$Stage\docs\"

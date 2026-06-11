@@ -100,10 +100,14 @@ func load_map() -> void:
 		@warning_ignore("integer_division")
 		var cc := [map_w / 2, map_h / 2]
 		_seats = [{"col": cc[0], "row": cc[1], "face": "down", "lounge": cc, "wait": cc}]
-	# 載入 tileset 紋理
+	# 載入 tileset 紋理（優先序：外部 PNG > 內嵌加密包 > 程式生成備援地圖）
 	var tsets := []
 	for ts in m["tilesets"]:
-		var img := Image.load_from_file(Paths.TILED_DIR + str(ts["image"]))
+		var img: Image = null
+		if FileAccess.file_exists(Paths.TILED_DIR + str(ts["image"])):
+			img = Image.load_from_file(Paths.TILED_DIR + str(ts["image"]))
+		if img == null:
+			img = AssetStore.image("tiled/" + str(ts["image"]))
 		if img != null:
 			tsets.append({"firstgid": int(ts["firstgid"]), "columns": int(ts["columns"]),
 				"tex": ImageTexture.create_from_image(img)})

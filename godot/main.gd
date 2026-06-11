@@ -73,13 +73,17 @@ func _ready() -> void:
 	w.always_on_top = false
 	_set_app_icon()
 	_shot = _has_arg("--shot")
-	for i in range(1, 10):   # 載入 BOT1~BOT9（缺檔→程式生成原創備援角色，開箱即用）
+	for i in range(1, 10):   # 角色來源優先序：外部 PNG > 內嵌加密包 > 程式生成備援
 		var nm := "BOT%d" % i
 		var p := Paths.CHARACTERS_DIR + ("/%s.png" % nm)
 		if FileAccess.file_exists(p):
 			var img := Image.load_from_file(p)
 			if img != null:
 				_bot_tex[nm] = ImageTexture.create_from_image(img)
+		if not _bot_tex.has(nm):
+			var im = AssetStore.image("characters/%s.png" % nm)
+			if im != null:
+				_bot_tex[nm] = ImageTexture.create_from_image(im)
 		if not _bot_tex.has(nm):
 			_bot_tex[nm] = FallbackArt.bot_sheet(i)
 	if _has_arg("--bot"):

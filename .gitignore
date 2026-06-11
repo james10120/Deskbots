@@ -19,7 +19,11 @@ assets/Modern tiles_Free/
 # 匯出/打包產物（app/package.ps1 產生）
 godot/Deskbots.exe
 godot/Deskbots.console.exe
+godot/assets.enc
 dist/
+
+# 素材加密金鑰（package.ps1 產生並使用；外洩=任何人可解開發行包素材）
+config/asset_key.txt
 
 # Claude Code 本機設定
 .claude/

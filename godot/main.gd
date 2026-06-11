@@ -130,6 +130,9 @@ func _build_windows() -> void:
 	_settings.build()
 	_settings.pin_toggled.connect(_on_pin_toggled)
 	_settings.board_toggle_requested.connect(_toggle_board)
+	_settings.add_server_requested.connect(_add_server)
+	_settings.vscode_requested.connect(_open_vscode)
+	_settings.remove_server_requested.connect(_remove_server)
 	_settings.quit_requested.connect(func():
 		_save_ui_state()   # 離開前把最終視窗狀態寫進 ui_state.json
 		get_tree().quit())
@@ -180,6 +183,8 @@ func _process(delta: float) -> void:
 			get_viewport().get_texture().get_image().save_png(Paths.SHOT_FILE)
 			if _board != null and _board.visible:   # 看板是獨立視窗，另存一張
 				_board.get_texture().get_image().save_png(Paths.SHOT_BOARD_FILE)
+			if _settings != null and _settings.visible:   # 設定卡開著也存一張
+				_settings.get_texture().get_image().save_png(Paths.ROOT + "/runtime/_shot_settings.png")
 			get_tree().quit()
 			return
 	# 行為（移動）+ 動畫
@@ -284,7 +289,13 @@ func _send_to_selected(text: String) -> void:
 func _focus_selected_terminal() -> void:
 	if _selected == "" or not _robots.has(_selected):
 		return
-	var hw := int(_robots[_selected].get("hwnd", 0))
+	var r = _robots[_selected]
+	var host := str(r.get("host", ""))
+	if host != "":
+		# 遠端 session：開 VS Code Remote-SSH 到該機該資料夾（code 是 .cmd shim，要走 cmd /c）
+		OS.create_process("cmd.exe", ["/c", "code", "--remote", "ssh-remote+" + host, str(r.get("cwd", ""))])
+		return
+	var hw := int(r.get("hwnd", 0))
 	if hw == 0:
 		_detail.flash_hint()
 		return
@@ -292,10 +303,14 @@ func _focus_selected_terminal() -> void:
 	# 不自動關對話卡：叫出終端後通常還要繼續送訊息／下指令
 
 
-func _rehire(cwd: String) -> void:
-	# 重新雇用 = 在原資料夾開新 PowerShell、claude -c 接續上次對話
+func _rehire(cwd: String, host: String) -> void:
 	if cwd == "":
 		return
+	if host != "":
+		# 遠端專案：開 VS Code Remote-SSH 直達該機該資料夾（在裡面開終端跑 claude）
+		OS.create_process("cmd.exe", ["/c", "code", "--remote", "ssh-remote+" + host, cwd])
+		return
+	# 本地專案：重新雇用 = 在原資料夾開新 PowerShell、claude -c 接續上次對話
 	OS.create_process("cmd.exe", ["/c", Paths.ROOT_WIN + "\\app\\launch_claude.cmd", cwd, "-c"])
 
 
@@ -316,6 +331,28 @@ func _toggle_settings() -> void:
 	else:
 		var pos := get_window().position + (get_window().size - _settings.size) / 2
 		_settings.open_at(pos, get_window().always_on_top)
+
+
+func _add_server(host: String, label: String) -> void:
+	# 開新終端視窗跑首次設定（金鑰/密碼互動在那邊完成）；bridge 熱載入，裝完機器人自動出現
+	OS.create_process("cmd.exe", ["/c", Paths.ROOT_WIN + "\\app\\add_server.cmd", host, label])
+
+
+func _open_vscode(host: String) -> void:
+	# code 是 .cmd shim，要經 cmd /c；不帶資料夾 = 開該機的 VS Code Remote 視窗
+	OS.create_process("cmd.exe", ["/c", "code", "--remote", "ssh-remote+" + host])
+
+
+func _remove_server(host: String) -> void:
+	# 從 servers.json 拿掉這台；bridge 熱載入後會斷線、清掉該台的鏡像（機器人離場）
+	var servers = Util.read_json_any(Paths.SERVERS_FILE)
+	if not (servers is Array):
+		return
+	var keep := []
+	for sv in servers:
+		if typeof(sv) != TYPE_DICTIONARY or str(sv.get("host", "")) != host:
+			keep.append(sv)
+	Util.write_json(Paths.SERVERS_FILE, keep)
 
 
 func _on_pin_toggled(on: bool) -> void:
@@ -522,6 +559,7 @@ func _upsert(data: Dictionary) -> void:
 	r.transcript = str(data.get("transcript", ""))
 	r.cwd = str(data.get("cwd", ""))
 	r.hwnd = int(data.get("hwnd", 0))
+	r.host = str(data.get("host", ""))   # 非空 = SSH 遠端 session（ssh_bridge 鏡像）
 	r.label.text = project
 	r.label.add_theme_color_override("font_color", Util.STATE_COLOR.get(state, Color.WHITE))
 	r.label.add_theme_stylebox_override("normal", Util.name_bg())

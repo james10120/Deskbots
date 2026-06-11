@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -26,10 +27,12 @@ SETTINGS = Path.home() / ".claude" / "settings.json"
 
 # hook 指令要寫絕對路徑（Claude 從任意 cwd 觸發），但路徑由「本檔所在位置」動態算出，
 # 不寫死 → 整包可裝在任何電腦的任何路徑。含空白的路徑用引號包起來。
+# 啟動器：Windows 用 py launcher；POSIX（SSH 遠端伺服器）用 python3。
 _APP = Path(__file__).resolve().parent
+_PY = "py" if os.name == "nt" else "python3"
 def _cmd(script: str) -> str:
     p = str(_APP / script).replace("\\", "/")
-    return f'py "{p}"' if " " in p else f"py {p}"
+    return f'{_PY} "{p}"' if " " in p else f"{_PY} {p}"
 EMIT = _cmd("emit.py")
 STATUSLINE = _cmd("statusline.py")
 
@@ -43,7 +46,7 @@ def _is_ours_cmd(cmd, script_name: str) -> bool:
     自己的舊條目，套用與移除時都要清掉，否則 hook 會重複執行或指到死路徑。"""
     if not isinstance(cmd, str):
         return False
-    return bool(re.match(r'^py\s+"?[^"]*[/\\]app[/\\]' + re.escape(script_name) + r'"?(\s|$)', cmd))
+    return bool(re.match(r'^(?:py|python3?)\s+"?[^"]*[/\\]app[/\\]' + re.escape(script_name) + r'"?(\s|$)', cmd))
 
 
 def _is_funai_cmd(cmd) -> bool:

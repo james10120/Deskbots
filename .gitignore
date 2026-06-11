@@ -16,3 +16,6 @@ assets/Modern tiles_Free/
 
 # Claude Code 本機設定
 .claude/
+
+# 本機的 SSH 伺服器清單（remote_install.py 產生；範本見 servers.example.json）
+config/servers.json

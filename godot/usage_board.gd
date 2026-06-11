@@ -4,8 +4,8 @@ extends DragWindow
 # + 人才庫（可重新雇用的歷史專案，含 ✕ 移除）。
 # 資料來源：usage.json / rehire.json（usage_poll.py 寫）；robots 由 main 每次 refresh 傳入。
 
-signal card_clicked(sid: String)        # 點 session 卡片 → main 開/關對話卡
-signal rehire_requested(cwd: String)    # 點人才庫列 → main 開新終端 claude -c
+signal card_clicked(sid: String)                      # 點 session 卡片 → main 開/關對話卡
+signal rehire_requested(cwd: String, host: String)    # 點人才庫列 → 本地開終端 claude -c；遠端開 VS Code
 
 const USAGE_W := 260            # 看板視窗寬
 const USAGE_MIN_H := 220        # 看板最小高（拉高把手的下限）
@@ -292,14 +292,18 @@ func _rehire_row(d: Dictionary) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 4)
 	var btn := Button.new()
+	var host := str(d.get("host", ""))
 	btn.text = "↻ %s   %s" % [str(d.get("project", "?")), str(d.get("ago", ""))]
-	btn.tooltip_text = "重新雇用：在 %s 開新終端、接續上次對話 (claude -c)" % str(d.get("cwd", ""))
+	if host != "":
+		btn.tooltip_text = "開 VS Code Remote 到 %s 的 %s" % [host, str(d.get("cwd", ""))]
+	else:
+		btn.tooltip_text = "重新雇用：在 %s 開新終端、接續上次對話 (claude -c)" % str(d.get("cwd", ""))
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	btn.clip_text = true
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	Util.style_btn(btn, Color(0.16, 0.22, 0.30, 0.8), Color(0.22, 0.32, 0.44, 0.9), Color(0.85, 0.92, 1.0), 12)
 	var cwd := str(d.get("cwd", ""))
-	btn.pressed.connect(func(): rehire_requested.emit(cwd))
+	btn.pressed.connect(func(): rehire_requested.emit(cwd, host))
 	row.add_child(btn)
 	# 移除：不想再看到的專案；之後該專案有新活動會自動回到人才庫
 	var rm := Button.new()
@@ -311,11 +315,18 @@ func _rehire_row(d: Dictionary) -> Control:
 	return row
 
 
+func _hidden_key(d: Dictionary) -> String:
+	# 移除名單的鍵：本地=norm_cwd；遠端加 label 前綴（不同伺服器可能有同路徑）
+	var k := Util.norm_cwd(str(d.get("cwd", "")))
+	var lbl := str(d.get("label", ""))
+	return (lbl + ":" + k) if lbl != "" else k
+
+
 func _hide_rehire(d: Dictionary) -> void:
 	# 記下「移除當下」的時間；本地與 usage_poll.py 都用 mtime <= 移除時間 過濾，
 	# 該專案之後有新活動（mtime 變新）就會自動回到人才庫。
-	var key := Util.norm_cwd(str(d.get("cwd", "")))
-	if key == "":
+	var key := _hidden_key(d)
+	if key == "" or key.ends_with(":"):
 		return
 	_hidden[key] = Time.get_unix_time_from_system()
 	Util.write_json(Paths.REHIRE_HIDDEN_FILE, _hidden)
@@ -328,15 +339,19 @@ func _load_hidden() -> Dictionary:
 
 
 func _load_departed() -> void:
-	# 人才庫由 usage_poll.py 掃 ~/.claude/projects 寫出（近期用過、目前沒在跑的專案）
-	var j = Util.read_json_any(Paths.REHIRE_FILE)
-	var rows: Array = j if j is Array else []
+	# 人才庫＝本地（usage_poll.py 掃 ~/.claude/projects）＋ 遠端（ssh_bridge 彙整各台）
+	var rows: Array = []
+	for p in [Paths.REHIRE_FILE, Paths.REHIRE_REMOTE_FILE]:
+		var j = Util.read_json_any(p)
+		if j is Array:
+			rows.append_array(j)
+	rows.sort_custom(func(a, b): return float(a.get("mtime", 0)) > float(b.get("mtime", 0)))
 	_departed = []
 	for d in rows:
 		if typeof(d) != TYPE_DICTIONARY:
 			continue
-		# 移除後 usage_poll 還沒重掃的空窗期，本地照同一規則過濾，畫面不閃回
-		var key := Util.norm_cwd(str(d.get("cwd", "")))
+		# 移除後輪詢還沒重掃的空窗期，本地照同一規則過濾，畫面不閃回
+		var key := _hidden_key(d)
 		if _hidden.has(key) and float(d.get("mtime", 0)) <= float(_hidden[key]):
 			continue
 		_departed.append(d)

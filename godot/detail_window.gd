@@ -12,6 +12,7 @@ var _header: Label
 var _text: RichTextLabel
 var _input: TextEdit       # 多行輸入：Enter 送出 / Shift+Enter 換行
 var _hint: Label           # hwnd 缺失時的提示
+var _fbtn: Button          # 呼叫終端鈕（遠端 session 改開 VS Code）
 
 
 func build() -> void:
@@ -100,12 +101,12 @@ func build() -> void:
 		var cmd: String = q[1]
 		qb.pressed.connect(func(): send_requested.emit(cmd))
 		qrow.add_child(qb)
-	# 呼叫對應終端視窗（給 TAB 聚焦不到時用）
-	var fbtn := Button.new()
-	fbtn.text = "▸ 呼叫這個 session 的終端視窗"
-	Util.style_btn(fbtn, Color(0.20, 0.34, 0.52), Color(0.26, 0.42, 0.62), Color(0.92, 0.96, 1.0), 14)
-	fbtn.pressed.connect(func(): focus_requested.emit())
-	vbox.add_child(fbtn)
+	# 呼叫對應終端視窗（給 TAB 聚焦不到時用；遠端 session 改開 VS Code Remote）
+	_fbtn = Button.new()
+	_fbtn.text = "▸ 呼叫這個 session 的終端視窗"
+	Util.style_btn(_fbtn, Color(0.20, 0.34, 0.52), Color(0.26, 0.42, 0.62), Color(0.92, 0.96, 1.0), 14)
+	_fbtn.pressed.connect(func(): focus_requested.emit())
+	vbox.add_child(_fbtn)
 
 
 func open_centered(scr: int) -> void:
@@ -132,11 +133,17 @@ func refresh(r: Dictionary) -> void:
 		body = "[color=#888888](尚無對話記錄)[/color]"
 	_text.text = body
 	# 沒有可聚焦的終端視窗（hwnd=0）→ 送指令/呼叫終端無法用，明確說明、輸入框變灰
+	var host := str(r.get("host", ""))
 	var has_win := int(r.get("hwnd", 0)) != 0
 	_hint.visible = not has_win
-	_hint.text = "⚠ 抓不到這個 session 的終端視窗（可能在 VS Code 整合終端或無視窗環境啟動）。用啟動器開的獨立 PowerShell 視窗才能送指令／呼叫終端。"
+	if host != "":
+		_hint.text = "🌐 遠端 session（%s）：送訊息請在 VS Code 操作，下方按鈕可直接開到該機該資料夾。" % host
+		_fbtn.text = "▸ 在 VS Code 開啟（%s）" % host
+	else:
+		_hint.text = "⚠ 抓不到這個 session 的終端視窗（可能在 VS Code 整合終端或無視窗環境啟動）。用啟動器開的獨立 PowerShell 視窗才能送指令／呼叫終端。"
+		_fbtn.text = "▸ 呼叫這個 session 的終端視窗"
 	_input.editable = has_win
-	_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）" if has_win else "此 session 無可用終端視窗"
+	_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）" if has_win else ("遠端 session：請在 VS Code 輸入" if host != "" else "此 session 無可用終端視窗")
 
 
 func flash_hint() -> void:

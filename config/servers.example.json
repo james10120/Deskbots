@@ -1,0 +1,7 @@
+[
+  {
+    "host": "myserver",
+    "label": "dev",
+    "root": "~/deskbots"
+  }
+]

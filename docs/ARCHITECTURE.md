@@ -155,6 +155,26 @@ start "Claude" powershell.exe -NoExit -Command "Set-Location -LiteralPath '%~1';
 
 ---
 
+## 6. 狀態機與時間衰減
+
+事件 → 狀態的權威對照在 `app/states.py`（`EVENT_STATE`）；但 Claude Code **沒有「中斷/恢復」hook**，
+所以光看事件會卡在過時狀態。兩邊（Python `states.decay_state` 與 Godot `main._upsert`）用同一套
+時間衰減自我修正，**主要活躍訊號是 transcript 檔的 mtime**（正在輸出＝檔案一直在長大）：
+
+| 規則 | 門檻 | 效果 |
+|------|------|------|
+| transcript 剛動過 | < 6s | 一律視為 working（覆蓋過時的 waiting/thinking） |
+| done 顯示一下 | > 5~8s | 回 idle（去休息室） |
+| waiting 等太久沒動作 | > 180s | 回 idle（避免卡死在等待區） |
+| thinking/working 久未輸出 | > 120s | 回 idle（容忍長回合的工具空檔） |
+| transcript 與事件都很舊 | > 1800s | 殭屍 session，機器人離場 |
+
+SSH 遠端 session 的衰減在**遠端**先算（transcript 在那台才讀得到），時間以「距今秒數」傳輸、
+本地還原，所以兩台機器時鐘不同步也不影響；transcript 尾段落地成本地快取檔後，
+Godot 的 mtime 心跳對遠端照常生效。
+
+---
+
 ## 相關檔案
 
 | 檔案 | 角色 |

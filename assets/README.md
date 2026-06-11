@@ -1,13 +1,16 @@
-# Bring your own assets / 素材自備說明
+# Assets / 素材說明
 
-This project was built with pixel art by [LimeZu](https://limezu.itch.io/).
-**LimeZu's license allows using the assets in projects but forbids redistributing the
-asset files themselves**, so neither this repo nor the release zip contains the PNGs —
-please obtain them and drop them into the paths below.
-Missing art does not crash anything: the map and robots will be invisible, but
-nameplates, the board and all UI still work.
+**Deskbots works out of the box** — when the PNGs below are absent, the game generates
+its own original flat-style office and little robots at runtime (100% original art,
+no third-party license involved).
 
-## Required files
+For the full pixel-art look, the project was designed around assets by
+[LimeZu](https://limezu.itch.io/). **LimeZu's license allows using the assets in
+projects but forbids redistributing the asset files**, so neither this repo nor the
+release zip contains them — drop them into the paths below and the game upgrades
+automatically.
+
+## Optional upgrade files
 
 | Place at | What | Source |
 |----------|------|--------|
@@ -35,7 +38,9 @@ with the repo — nothing to prepare.
 
 ## 中文摘要
 
-LimeZu 授權允許在專案中使用素材、但**禁止再散布素材檔案**，因此 repo 與發行包都不含 PNG。
-請自行取得並放入上表位置：角色表 `BOT1~9.png`（16×32/幀，列 2 站立、列 3 走路、列 7 滑手機、
-列 8 看書；免費版 Adam/Alex/… 改名即可）、兩張 16×16 瓦片集（檔名須一致）。
-缺圖不會當機，只是地圖與角色看不到。`assets/icon.png` 是本專案自己的 LOGO，已隨 repo 提供。
+**開箱即用**：沒放 PNG 時，遊戲會即時生成原創簡約風辦公室與小機器人（100% 本專案原創，
+無第三方授權問題）。想要完整像素風，再放入 LimeZu 素材即自動升級：LimeZu 授權允許在
+專案中使用、但**禁止再散布素材檔案**，因此 repo 與發行包都不含 PNG。放入位置見上表：
+角色表 `BOT1~9.png`（16×32/幀，列 2 站立、列 3 走路、列 7 滑手機、列 8 看書；免費版
+Adam/Alex/… 改名即可）、兩張 16×16 瓦片集（檔名須一致）。
+`assets/icon.png` 是本專案自己的 LOGO，已隨 repo 提供。

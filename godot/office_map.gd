@@ -107,6 +107,17 @@ func load_map() -> void:
 		if img != null:
 			tsets.append({"firstgid": int(ts["firstgid"]), "columns": int(ts["columns"]),
 				"tex": ImageTexture.create_from_image(img)})
+	# 瓦片集缺檔（使用者尚未放入素材）→ 程式生成的簡約辦公室，開箱即用
+	if tsets.is_empty():
+		var solid0 := {}
+		var sg = m.get("solid", [])
+		for idx in range(sg.size()):
+			if int(sg[idx]) == 1:
+				@warning_ignore("integer_division")
+				solid0[Vector2i(idx % map_w, idx / map_w)] = true
+		_paint_fallback(solid0)
+		_build_astar(solid0)
+		return
 	# 逐格畫；地板永遠最底，其餘家具依圖層順序疊（z 0~8），與角色腳底 Y 比前後
 	var li := 0
 	for L in m["layers"]:
@@ -173,6 +184,42 @@ func load_map() -> void:
 			var row := idx / map_w
 			solid[Vector2i(idx % map_w, row)] = true
 	_build_astar(solid)
+
+
+func _paint_fallback(solid: Dictionary) -> void:
+	# 簡約平面風辦公室：合成一張整圖（地板棋盤/牆/家具塊 + 椅子/沙發/地墊提示）
+	var img := Image.create(map_w * TILE, map_h * TILE, false, Image.FORMAT_RGBA8)
+	for r in range(map_h):
+		for c in range(map_w):
+			var rect := Rect2i(c * TILE, r * TILE, TILE, TILE)
+			if solid.has(Vector2i(c, r)):
+				if r < 3 or r >= map_h - 1 or c == 0 or c == map_w - 1:
+					img.fill_rect(rect, Color(0.40, 0.36, 0.36))            # 牆
+					img.fill_rect(Rect2i(rect.position.x, rect.position.y + TILE - 2, TILE, 2),
+						Color(0.30, 0.27, 0.27))
+				else:
+					img.fill_rect(rect, Color(0.58, 0.47, 0.36))            # 家具（桌面等）
+					img.fill_rect(Rect2i(rect.position.x, rect.position.y, TILE, 2),
+						Color(0.66, 0.55, 0.43))
+			else:
+				var even := (c + r) % 2 == 0
+				img.fill_rect(rect, Color(0.84, 0.82, 0.77) if even else Color(0.81, 0.79, 0.74))
+	for s in _seats:
+		var sc := Vector2i(int(s.col), int(s.row))
+		img.fill_rect(Rect2i(sc.x * TILE + 3, sc.y * TILE + 4, 10, 9), Color(0.84, 0.45, 0.25))   # 椅子
+		img.fill_rect(Rect2i(sc.x * TILE + 3, sc.y * TILE + 11, 10, 2), Color(0.62, 0.32, 0.18))
+		var lc: Array = s.lounge
+		img.fill_rect(Rect2i(int(lc[0]) * TILE + 1, int(lc[1]) * TILE + 4, 14, 10), Color(0.46, 0.55, 0.69))  # 沙發
+		img.fill_rect(Rect2i(int(lc[0]) * TILE + 1, int(lc[1]) * TILE + 4, 14, 3), Color(0.56, 0.65, 0.78))
+		var wc: Array = s.wait
+		img.fill_rect(Rect2i(int(wc[0]) * TILE + 2, int(wc[1]) * TILE + 3, 12, 11), Color(0.76, 0.73, 0.66))  # 等待區地墊
+	var spr := Sprite2D.new()
+	spr.texture = ImageTexture.create_from_image(img)
+	spr.centered = false
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.scale = Vector2(SCALE, SCALE)
+	spr.z_index = 0   # 永遠墊底，角色(1000+)在上
+	add_child(spr)
 
 
 func _build_astar(solid: Dictionary) -> void:

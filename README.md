@@ -50,7 +50,7 @@ taking the others down.
 | [docs/USAGE.zh-TW.md](docs/USAGE.zh-TW.md) | 使用手冊（中文版） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Deep dive** (zh-TW): data flow, terminal hwnd capture, keystroke injection, SSH bridge, failure modes |
 | [docs/TILED.md](docs/TILED.md) | **Map modules** (zh-TW): Tiled layer rules, anchors, changing the layout |
-| [assets/README.md](assets/README.md) | **Bring your own assets**: which files, formats, where to get them |
+| [assets/README.md](assets/README.md) | **Assets**: built-in fallback art, optional LimeZu upgrade (files, formats, sources) |
 
 ## Requirements
 
@@ -60,14 +60,14 @@ taking the others down.
 | Python 3.8+ (`py` launcher) | data layer is pure stdlib, zero dependencies |
 | [Claude Code](https://claude.com/claude-code) CLI | the thing being visualized |
 | Godot 4.6 | either install the editor (dev) or use the packaged `godot\Deskbots.exe` (no install) |
-| Asset PNGs | LimeZu's license forbids redistribution — **add them yourself, see [assets/README.md](assets/README.md)** |
+| (optional) Asset PNGs | **works out of the box** with built-in generated art; drop in LimeZu assets to upgrade the visuals ([assets/README.md](assets/README.md)) |
 | (optional) VS Code + Remote-SSH, OpenSSH | for the SSH multi-server feature |
 
 ## Install & run
 
 ```
 git clone https://github.com/james10120/Deskbots.git && cd Deskbots
-(drop in the asset PNGs as described in assets/README.md)
+(optional: drop in the LimeZu asset PNGs for the full pixel-art look — assets/README.md)
 ```
 
 **Clean mode (recommended)** — double-click **`app\run_deskbots.cmd`**.

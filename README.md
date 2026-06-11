@@ -95,8 +95,9 @@ powershell -File app\package.ps1 -Version 1.0.0
 ```
 
 Requires the Godot 4.6 editor + matching export templates on the build machine.
-Produces `dist\Deskbots-<version>-win64.zip`: unzip → add assets → double-click
-`app\run_deskbots.cmd`. No Godot install needed (Python still is).
+Produces `dist\Deskbots-<version>-win64.zip`: unzip → double-click `godot\Deskbots.exe`.
+No Godot install needed (Python still is). The packaged build already embeds the baked map
+and encrypted art, so it runs as-is.
 
 ## SSH multi-server
 

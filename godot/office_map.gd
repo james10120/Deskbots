@@ -1,34 +1,19 @@
 class_name OfficeMap
 extends Node2D
 # 辦公室地圖與地理：載入 bake_map.py 烘焙的 map_baked.json、畫圖層/overlay、
-# 建 A* 走格。座位/休息點/等待點等「辦公室地理」集中在這裡，外界只問像素座標。
+# 建 A* 走格。座位/休息點/等待點由烘焙時依模組錨點動態算好（每座位含
+# lounge/wait 配對），這裡只載入；任何 COMPOSITION 都不用改 GDScript。
 
 const SCALE := 1.2
 const TILE := 16
 
-# 工作座位（格座標 col,row；face=面向 down/up）
-const SEATS := [
-	{"col": 9, "row": 5, "face": "down"},   # room1
-	{"col": 12, "row": 5, "face": "down"},
-	{"col": 9, "row": 9, "face": "up"},
-	{"col": 12, "row": 9, "face": "up"},
-	{"col": 18, "row": 5, "face": "down"},  # room2
-	{"col": 21, "row": 5, "face": "down"},
-	{"col": 18, "row": 9, "face": "up"},
-	{"col": 21, "row": 9, "face": "up"},
-]
-# 休息點（座位序對應；前 4=左休息室、後 4=右休息室；散開不擠在一起，皆在 nav 可走格）
-const LOUNGE_TILES := [[2, 3], [4, 3], [2, 7], [4, 9], [27, 3], [29, 3], [27, 7], [29, 9]]
-# 等待位置（座位序對應；前 4 個=room1，後 4 個=room2）
-const WAIT_TILES := [[8, 3], [11, 2], [15, 3], [13, 3], [17, 3], [20, 2], [24, 3], [22, 3]]
-# 通道開口（強制可走，連通各模組）
-const PASSAGE_TILES := [[6, 4], [6, 5], [6, 6], [25, 4], [25, 5], [25, 6]]
 # 座位人物上下位移（格，正值=往上移動的格數）— 微調坐姿位置用
 const SEAT_UP_DY := 1.5
 const SEAT_DOWN_DY := 0.5
 
 var map_w := 17
 var map_h := 11
+var _seats: Array = []   # [{col,row,face,lounge:[c,r],wait:[c,r]}]，bake_map.py 算好
 var _astar: AStarGrid2D
 
 
@@ -38,17 +23,17 @@ func tile_px(col: float, row: float) -> Vector2:
 
 
 func seat_count() -> int:
-	return SEATS.size()
+	return _seats.size()
 
 
 func seat_face(i: int) -> String:
-	return SEATS[i].face
+	return str(_seats[i % _seats.size()].get("face", "down"))
 
 
 func seat_px(i: int) -> Vector2:
-	var s = SEATS[i]
-	var p := tile_px(s.col, s.row)
-	if s.face == "up":
+	var s: Dictionary = _seats[i % _seats.size()]
+	var p := tile_px(float(s.col), float(s.row))
+	if str(s.get("face", "down")) == "up":
 		p.y -= SEAT_UP_DY * TILE * SCALE     # 正值往上
 	else:
 		p.y -= SEAT_DOWN_DY * TILE * SCALE
@@ -56,13 +41,13 @@ func seat_px(i: int) -> Vector2:
 
 
 func lounge_px(seat_idx: int) -> Vector2:
-	var t = LOUNGE_TILES[seat_idx % LOUNGE_TILES.size()]
-	return tile_px(t[0], t[1])
+	var t: Array = _seats[seat_idx % _seats.size()].lounge
+	return tile_px(float(t[0]), float(t[1]))
 
 
 func wait_px(seat_idx: int) -> Vector2:
-	var t = WAIT_TILES[seat_idx % WAIT_TILES.size()]
-	return tile_px(t[0], t[1])
+	var t: Array = _seats[seat_idx % _seats.size()].wait
+	return tile_px(float(t[0]), float(t[1]))
 
 
 func window_px_size() -> Vector2i:
@@ -108,6 +93,13 @@ func load_map() -> void:
 	var tw := int(m["tilewidth"])
 	map_w = int(m["width"])
 	map_h = int(m["height"])
+	_seats = m.get("seats", [])
+	if _seats.is_empty():
+		# 沒有座位資料（舊烘焙檔/組裝裡沒有房間）：放一個地圖中央的保底座位
+		push_error("map_baked.json 沒有 seats，請重跑 bake_map.py")
+		@warning_ignore("integer_division")
+		var cc := [map_w / 2, map_h / 2]
+		_seats = [{"col": cc[0], "row": cc[1], "face": "down", "lounge": cc, "wait": cc}]
 	# 載入 tileset 紋理
 	var tsets := []
 	for ts in m["tilesets"]:
@@ -192,13 +184,11 @@ func _build_astar(solid: Dictionary) -> void:
 	_astar.update()
 	for c in solid:
 		_astar.set_point_solid(c, true)
-	# 座位與休息點一定要可走（否則機器人到不了）
-	for s in SEATS:
+	# 錨點（座位/休息/等待）一定要可走——模組錨點標錯也不至於讓機器人卡死
+	for s in _seats:
 		_astar.set_point_solid(Vector2i(int(s.col), int(s.row)), false)
-	for t in WAIT_TILES:
-		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
-	for t in PASSAGE_TILES:
-		_astar.set_point_solid(Vector2i(int(t[0]), int(t[1])), false)
+		_astar.set_point_solid(Vector2i(int(s.lounge[0]), int(s.lounge[1])), false)
+		_astar.set_point_solid(Vector2i(int(s.wait[0]), int(s.wait[1])), false)
 
 
 func _pick_tileset(tsets: Array, gid: int):
@@ -210,7 +200,7 @@ func _pick_tileset(tsets: Array, gid: int):
 
 
 func draw_grid() -> void:
-	# debug：在每格標 (col,row)，方便讀出座位/休息室座標
+	# debug：在每格標 (col,row)，並把烘焙的錨點標上 S=座位 W=等待 L=休息（同序號一組）
 	var tw := int(TILE * SCALE)
 	for row in range(map_h):
 		for col in range(map_w):
@@ -221,3 +211,20 @@ func draw_grid() -> void:
 			lbl.position = Vector2(col * tw + 2, row * tw + 1)
 			lbl.z_index = 4096
 			add_child(lbl)
+	for i in range(_seats.size()):
+		var s: Dictionary = _seats[i]
+		_anchor_mark("S%d" % i, int(s.col), int(s.row), Color(0.3, 1.0, 0.3))
+		_anchor_mark("W%d" % i, int(s.wait[0]), int(s.wait[1]), Color(1.0, 0.8, 0.2))
+		_anchor_mark("L%d" % i, int(s.lounge[0]), int(s.lounge[1]), Color(0.4, 0.8, 1.0))
+
+
+func _anchor_mark(text: String, col: int, row: int, c: Color) -> void:
+	var tw := int(TILE * SCALE)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", c)
+	lbl.add_theme_stylebox_override("normal", Util.name_bg())
+	lbl.position = Vector2(col * tw, row * tw + 7)
+	lbl.z_index = 4097
+	add_child(lbl)

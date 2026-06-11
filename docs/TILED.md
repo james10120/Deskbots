@@ -1,79 +1,66 @@
-# 用 Tiled 設計辦公室 → 交給我渲染
+# 用 Tiled 設計辦公室模組 → 烘焙拼接
 
-你在 Tiled 把辦公室排好、再用「物件」標記座位與休息點，匯出 `.tmj`，連同瓦片 PNG 給我。
-我寫一個 Tiled 載入器，照你的排版原樣畫出地圖，機器人依你標的點去工作/休息。
+地圖不是一張大圖，而是由多個 **11 格高的模組**水平拼接：
+`bake_map.py` 依 `COMPOSITION` 順序把模組拼成 `map_baked.json`，Godot 只負責照著畫。
+座位/休息點/等待點也在烘焙時依「模組錨點」自動算好——改佈局、加房間都不用碰 GDScript。
 
----
-
-## 1. 建立地圖
-
-- Tiled → New Map
-- **Orientation**：Orthogonal
-- **Tile size**：**16 × 16 px**（一定要 16，才跟角色比例一致）
-- **Map size**：建議 **17 × 11 格** 左右（我會用 4 倍放大 → 約 1088×704 的視窗）。
-  想更大也行，我會把視窗配合你的地圖尺寸自動調整。
-
-## 2. 加入瓦片集（Tilesets）
-
-對每張要用的 PNG：Tiled → New Tileset →「Based on Tileset Image」
-- Source：選 Modern Interiors 的 PNG，例如
-  - `Room_Builder_subfiles/Room_Builder_Floors_16x16.png`（地板）
-  - `Room_Builder_subfiles/Room_Builder_3d_walls_16x16.png`（牆）
-  - `Theme_Sorter/1_Generic_16x16.png` 或 `Interiors_16x16.png`（家具：長桌、沙發、飲水機、植栽）
-- **Tile width/height = 16**，Margin = 0，Spacing = 0
-
-## 3. 畫圖層（Tile Layers）
-
-建幾個圖層由下往上畫（圖層順序＝繪製順序）：
-1. `floor`（地板鋪滿）
-2. `walls`（外牆、隔間）
-3. `furniture`（長桌、沙發、飲水機、植栽、地毯…）
-
-> 想要會議長桌坐 6 人，就在 furniture 層把長桌拼出來、兩側留出椅子位置。
-
-## 4. 標記「座位」與「休息點」（最關鍵）★
-
-機器人要知道去哪坐、去哪休息 —— 用一個**物件層**告訴我：
-
-- 新增一個 **Object Layer**（名字隨意，例如 `markers`）
-- 用 **Insert Point**（點物件）放下標記，並在右側 **Name** 欄命名：
-  - **6 個工作座位** → 每個點命名 `seat`
-    （放在每張椅子/桌前該坐的位置；我會由左到右依序分配給 session）
-  - **休息點** → 每個點命名 `lounge`
-    （沙發座位、飲水機旁、想讓他們閒晃待著的點，放幾個都行）
-- 點的位置 = 機器人會站/坐的位置（大概對準椅子即可，可微調）
-
-> 之後想加變化也只要加命名點，例如 `door`（進場點）、`plant` 之類，跟我說新名字代表什麼即可。
-
-## 5. 匯出
-
-- File → **Export As** → **JSON map files (*.tmj)**，存成例如 `office.tmj`
-- 瓦片集圖片：請把**用到的 PNG 複製到跟 `office.tmj` 同一個資料夾**
-  （這樣 .tmj 裡的相對路徑我才找得到圖。或者在 Tiled 裡把 tileset「Embed in Map」後再匯出也可以，但 PNG 還是要給我。）
+```
+COMPOSITION（app/bake_map.py，由左到右）
+entrance │ lounge │ passage │ room │ room │ passage │ lounge │ end
+   1格       5格      1格      9格    9格     1格       5格     1格
+```
 
 ---
 
-## 6. 交給我什麼
+## 1. 模組規格
 
-把這些放進 `D:\Work\FunAI\assets\tiled\`（資料夾自己建）：
-1. `office.tmj`
-2. 它用到的所有瓦片集 **PNG**（跟 .tmj 同資料夾）
+- **Orientation**：Orthogonal，**Tile size：16×16**（務必，跟角色比例一致）
+- **高度固定 11 格**，寬度自由（現有：entrance/passage/end=1、lounge=5、room=9）
+- 存成 `assets/tiled/office_<名字>.tmj`（JSON 格式，圖層資料 Base64 + zlib）
 
-然後跟我說一句：**「office.tmj 在 assets\tiled\ 了」** 即可。
+## 2. 圖層命名規則（bake_map.py 認名字）
 
-我會做的事：
-- 寫一個 `.tmj` 載入器，照圖層原樣渲染整間辦公室（取代目前的程式拼圖）
-- 讀 `markers` 物件層：`seat` 點 → 6 個工作座位、`lounge` 點 → 休息點
-- 機器人行為不變：工作時去 seat 坐、忙完走去 lounge 休息
+| 圖層名 | 用途 |
+|--------|------|
+| `圖塊層 N`（任何含數字的名字） | 一般渲染層，數字=疊放順序，跨模組同號對齊 |
+| `nav` | **可走遮罩**（不渲染）：有畫=可走、空白=障礙。座位/休息/等待格都要標 |
+| `overlay` | 永遠畫在角色**前面**的層（桌沿、椅背等遮擋物），可多層 |
 
----
+## 3. 錨點（座位/休息/等待）
+
+在 `app/bake_map.py` 的 `MODULE_ANCHORS` 為**每種模組**定義一次相對格座標：
+
+```python
+MODULE_ANCHORS = {
+    "office_room": {
+        "seats": [{"col": 2, "row": 5, "face": "down"}, ...],  # face=面向
+        "waits": [[1, 3], [4, 2], ...],                        # 等待點
+    },
+    "office_lounge": {
+        "lounges": [[1, 3], [3, 3], ...],                      # 休息點
+    },
+}
+```
+
+烘焙時依拼接偏移換算成絕對座標，並做**就近配對**：每個座位配最近休息室的點
+（組內輪流取點，不會擠在同一格）。錨點必須落在該模組 `nav` 可走格上。
+
+座標可用遊戲的 debug 格線讀：`godot --path godot -- --grid` 會在每格標 (col,row)。
+
+## 4. 改佈局 / 加新模組
+
+- **改佈局**：只改 `COMPOSITION` 陣列（加房間、換順序），重跑 `py app/bake_map.py`
+  （啟動器每次都會自動跑，雙擊 `run_deskbots.cmd` 即生效）
+- **加新模組**：畫新的 `office_<名字>.tmj`（含 `nav`，需要就加 `overlay`）→
+  若有座位/休息點，在 `MODULE_ANCHORS` 加一條 → 加進 `COMPOSITION`
 
 ## 小抄
 
 | 項目 | 設定 |
 |------|------|
-| Tile size | 16×16（務必） |
-| 匯出格式 | JSON (.tmj) |
-| 座位標記 | Object Layer 裡命名 `seat` 的點（6 個） |
-| 休息標記 | 命名 `lounge` 的點（數個） |
-| 給我 | `office.tmj` + 用到的 PNG，放 `assets\tiled\` |
+| Tile size | 16×16（務必），高度 11 格 |
+| 匯出格式 | JSON (.tmj)，放 `assets/tiled/` |
+| 可走標記 | `nav` 圖層（不渲染） |
+| 前景遮擋 | `overlay` 圖層（可多層） |
+| 座位等錨點 | `app/bake_map.py` 的 `MODULE_ANCHORS`（每種模組一次） |
+| 佈局 | `app/bake_map.py` 的 `COMPOSITION` |

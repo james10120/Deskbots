@@ -1,4 +1,4 @@
-﻿# FunAI 乾淨生命週期啟動器
+﻿# Deskbots 乾淨生命週期啟動器
 #
 # 開 → 用 → 關，全程不汙染現有環境：
 #   1. 安裝 FunAI 的 hooks / statusLine 到全域 ~/.claude/settings.json
@@ -16,7 +16,7 @@ $App   = 'D:\Work\FunAI\app'
 $Godot = 'D:\Work\GameDev\Godot\Godot_v4.6.3-stable_win64.exe'
 $Runtime = 'D:\Work\FunAI\runtime'
 
-Write-Host '== FunAI：安裝 hooks / statusLine（離開時會自動還原）=='
+Write-Host '== Deskbots：安裝 hooks / statusLine（離開時會自動還原）=='
 & py "$App\apply_settings.py"
 & py "$App\clean_sessions.py"
 & py "$App\bake_map.py"

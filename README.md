@@ -1,4 +1,8 @@
-# FunAI — Claude Code 機器人辦公室地圖
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="Deskbots">
+</p>
+
+# Deskbots — Claude Code 機器人辦公室地圖
 
 把每個正在執行的 Claude Code session 變成一張俯瞰辦公室地圖上的小機器人：
 工作時坐在自己座位、等你授權時走到等待區滑手機、忙完走去休息室看書。
@@ -32,10 +36,10 @@ app/statusline.py                       依狀態走位/播動畫、A* 繞牆尋
 ## 啟動
 
 **乾淨模式（推薦）**：雙擊 **`app/run_funai.cmd`**。開啟時自動安裝 hooks/statusLine，**關閉地圖後自動還原全域設定、停背景行程、清 runtime**，跑完不在 `~/.claude/settings.json` 留任何痕跡（`try/finally` 保證收尾）。
-→ 要被觀察的 Claude session 請在**開啟 FunAI 之後**才啟動，才會出現機器人。
+→ 要被觀察的 Claude session 請在**開啟 Deskbots 之後**才啟動，才會出現機器人。
 → 萬一 powershell 被強制砍掉（finally 來不及跑），跑一次 `py app/apply_settings.py --remove` 即可手動還原。
 
-**常駐模式**：先跑一次 `py app/apply_settings.py` 把 hooks/statusLine 併入全域設定（idempotent、非破壞性、會備份 `.bak`），之後雙擊 **`app/start_map.cmd`** 只開地圖。要卸載時 `py app/apply_settings.py --remove`（只移除 FunAI 自己的設定並還原你原本的 statusLine）。
+**常駐模式**：先跑一次 `py app/apply_settings.py` 把 hooks/statusLine 併入全域設定（idempotent、非破壞性、會備份 `.bak`），之後雙擊 **`app/start_map.cmd`** 只開地圖。要卸載時 `py app/apply_settings.py --remove`（只移除 Deskbots 自己的設定並還原你原本的 statusLine）。
 
 ## 使用量數據窗
 

@@ -1,5 +1,5 @@
 extends Node2D
-# FunAI Robot Map — 階段 2b
+# Deskbots — Claude Code 桌面機器人辦公室
 # 輪詢 runtime/sessions/*.json → 每個 session 一隻角色，依狀態播動畫、依專案分區。
 # 素材從 assets 絕對路徑載入，不需 import。
 
@@ -217,6 +217,12 @@ func _empty_seat_at(mp: Vector2) -> bool:
 			return true
 	return false
 
+func _set_app_icon() -> void:
+	# 視窗 / 工作列圖示用 Deskbots LOGO（素材在 res:// 外，走絕對路徑載入）
+	var img := Image.load_from_file("D:/Work/FunAI/assets/icon.png")
+	if img != null:
+		DisplayServer.set_icon(img)
+
 func _ready() -> void:
 	# 透明背景（多管齊下，確保 Windows 上生效）
 	get_tree().root.transparent_bg = true
@@ -226,6 +232,7 @@ func _ready() -> void:
 	var w := get_window()
 	w.borderless = true
 	w.always_on_top = false
+	_set_app_icon()
 	_build_detail_window()
 	_shot = OS.get_cmdline_args().has("--shot")
 	for i in range(1, 10):   # 載入 BOT1~BOT9（缺檔就略過）
@@ -307,7 +314,7 @@ func _process(delta: float) -> void:
 
 func _build_detail_window() -> void:
 	_detail_win = Window.new()
-	_detail_win.title = "FunAI 對話"
+	_detail_win.title = "Deskbots 對話"
 	_detail_win.size = Vector2i(540, 520)
 	_detail_win.visible = false
 	_detail_win.borderless = true       # 移除原始 OS 視窗邊框，改用卡片自己的關閉鈕
@@ -461,7 +468,7 @@ func _refresh_detail() -> void:
 	if _selected == "" or not _robots.has(_selected):
 		return
 	var r = _robots[_selected]
-	_detail_win.title = "FunAI 對話 — %s" % str(r.project)
+	_detail_win.title = "Deskbots 對話 — %s" % str(r.project)
 	var col: Color = STATE_COLOR.get(str(r.state), Color.WHITE)
 	_detail_header.text = "💬 %s   ·   %s" % [str(r.project), str(r.state)]
 	_detail_header.add_theme_color_override("font_color", col.lerp(Color.WHITE, 0.3))
@@ -757,7 +764,7 @@ func _on_pin_toggled(on: bool) -> void:
 # ── 工作看板（獨立視窗：分開釘選、拖曳、拉高、透明背景）──────────
 func _build_usage_window() -> void:
 	_usage_win = Window.new()
-	_usage_win.title = "FunAI 工作看板"
+	_usage_win.title = "Deskbots 工作看板"
 	_usage_win.size = Vector2i(USAGE_W, 380)
 	_usage_win.borderless = true       # 無邊框，把手/按鈕都自己畫
 	_usage_win.unresizable = true      # OS 縮放關掉，改用底部把手拉高

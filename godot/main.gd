@@ -185,6 +185,8 @@ func _process(delta: float) -> void:
 				_board.get_texture().get_image().save_png(Paths.SHOT_BOARD_FILE)
 			if _settings != null and _settings.visible:   # 設定卡開著也存一張
 				_settings.get_texture().get_image().save_png(Paths.ROOT + "/runtime/_shot_settings.png")
+			if _detail != null and _detail.visible:   # 對話卡開著也存一張
+				_detail.get_texture().get_image().save_png(Paths.ROOT + "/runtime/_shot_detail.png")
 			get_tree().quit()
 			return
 	# 行為（移動）+ 動畫

@@ -13,6 +13,8 @@ var _text: RichTextLabel
 var _input: TextEdit       # 多行輸入：Enter 送出 / Shift+Enter 換行
 var _hint: Label           # hwnd 缺失時的提示
 var _fbtn: Button          # 呼叫終端鈕（遠端 session 改開 VS Code）
+var _inrow: HBoxContainer  # 輸入列（遠端 session 隱藏——鍵盤注入打不到遠端）
+var _qrow: HBoxContainer   # 快捷指令列（遠端 session 隱藏）
 
 
 func build() -> void:
@@ -64,9 +66,10 @@ func build() -> void:
 	_text.add_theme_constant_override("line_separation", 3)
 	inner.add_child(_text)
 	# 送訊息/指令給這個 session（聚焦其終端 → 鍵盤注入文字 + Enter）
-	var inrow := HBoxContainer.new()
-	inrow.add_theme_constant_override("separation", 8)
-	vbox.add_child(inrow)
+	_inrow = HBoxContainer.new()
+	_inrow.add_theme_constant_override("separation", 8)
+	vbox.add_child(_inrow)
+	var inrow := _inrow
 	_input = TextEdit.new()
 	_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）"
 	_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -90,9 +93,10 @@ func build() -> void:
 	_hint.visible = false
 	vbox.add_child(_hint)
 	# 快捷指令列
-	var qrow := HBoxContainer.new()
-	qrow.add_theme_constant_override("separation", 8)
-	vbox.add_child(qrow)
+	_qrow = HBoxContainer.new()
+	_qrow.add_theme_constant_override("separation", 8)
+	vbox.add_child(_qrow)
+	var qrow := _qrow
 	for q in [["/clear", "/clear"], ["/compact", "/compact"], ["⎋ 中斷", "<ESC>"]]:
 		var qb := Button.new()
 		qb.text = q[0]
@@ -132,18 +136,22 @@ func refresh(r: Dictionary) -> void:
 	if body == "":
 		body = "[color=#888888](尚無對話記錄)[/color]"
 	_text.text = body
-	# 沒有可聚焦的終端視窗（hwnd=0）→ 送指令/呼叫終端無法用，明確說明、輸入框變灰
+	# 遠端 session：鍵盤注入打不到遠端 → 純顯示內容，藏掉輸入/快捷列，只留 VS Code 鈕
 	var host := str(r.get("host", ""))
+	var is_remote := host != ""
+	_inrow.visible = not is_remote
+	_qrow.visible = not is_remote
+	if is_remote:
+		_hint.visible = false
+		_fbtn.text = "▸ 在 VS Code 開啟（%s）" % host
+		return
+	# 本地 session：沒有可聚焦的終端視窗（hwnd=0）→ 明確說明、輸入框變灰
 	var has_win := int(r.get("hwnd", 0)) != 0
 	_hint.visible = not has_win
-	if host != "":
-		_hint.text = "🌐 遠端 session（%s）：送訊息請在 VS Code 操作，下方按鈕可直接開到該機該資料夾。" % host
-		_fbtn.text = "▸ 在 VS Code 開啟（%s）" % host
-	else:
-		_hint.text = "⚠ 抓不到這個 session 的終端視窗（可能在 VS Code 整合終端或無視窗環境啟動）。用啟動器開的獨立 PowerShell 視窗才能送指令／呼叫終端。"
-		_fbtn.text = "▸ 呼叫這個 session 的終端視窗"
+	_hint.text = "⚠ 抓不到這個 session 的終端視窗（可能在 VS Code 整合終端或無視窗環境啟動）。用啟動器開的獨立 PowerShell 視窗才能送指令／呼叫終端。"
+	_fbtn.text = "▸ 呼叫這個 session 的終端視窗"
 	_input.editable = has_win
-	_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）" if has_win else ("遠端 session：請在 VS Code 輸入" if host != "" else "此 session 無可用終端視窗")
+	_input.placeholder_text = "送訊息或指令給 Claude…（Enter 送出，Shift+Enter 換行）" if has_win else "此 session 無可用終端視窗"
 
 
 func flash_hint() -> void:

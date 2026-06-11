@@ -29,6 +29,7 @@ except Exception:
 POLL_SEC = 2.0
 USAGE_FILE = states.RUNTIME_DIR / "usage.json"
 REHIRE_FILE = states.RUNTIME_DIR / "rehire.json"   # 人才庫：可重新雇用的歷史專案
+HIDDEN_FILE = states.RUNTIME_DIR / "rehire_hidden.json"   # 人才庫移除名單（Godot 的 ✕ 寫入：norm_cwd -> 移除時間）
 LOCK_FILE = states.RUNTIME_DIR / "usage.lock"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 REHIRE_MAX = 8          # 人才庫最多列幾個專案
@@ -194,10 +195,20 @@ def _project_cwd(proj_dir: Path):
     return {"cwd": cwd, "mtime": latest.stat().st_mtime}
 
 
+def _load_hidden() -> dict:
+    """人才庫移除名單：norm_cwd -> 移除當下的 unix 時間（Godot 看板的 ✕ 寫入）。"""
+    try:
+        d = json.loads(HIDDEN_FILE.read_text(encoding="utf-8"))
+        return {str(k): float(v) for k, v in d.items()} if isinstance(d, dict) else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
 def _scan_rehire(active_cwds: set) -> None:
     """掃 ~/.claude/projects，列出「最近用過但目前沒在跑」的專案 → 人才庫。"""
     if not PROJECTS_DIR.exists():
         return
+    hidden = _load_hidden()
     cands = []
     for proj in PROJECTS_DIR.glob("*"):
         if not proj.is_dir():
@@ -205,8 +216,11 @@ def _scan_rehire(active_cwds: set) -> None:
         info = _project_cwd(proj)
         if info is None:
             continue
-        if _norm_cwd(info["cwd"]) in active_cwds:   # 正在上工的不列
+        norm = _norm_cwd(info["cwd"])
+        if norm in active_cwds:   # 正在上工的不列
             continue
+        if info["mtime"] <= hidden.get(norm, -1.0):
+            continue              # 被 ✕ 移除：移除前的活動不再列；之後有新活動會自動回來
         cands.append(info)
     cands.sort(key=lambda c: c["mtime"], reverse=True)
     now = time.time()
@@ -214,7 +228,7 @@ def _scan_rehire(active_cwds: set) -> None:
     for c in cands[:REHIRE_MAX]:
         cwd = c["cwd"]
         name = cwd.replace("/", "\\").rstrip("\\").split("\\")[-1] or cwd
-        rows.append({"project": name, "cwd": cwd, "ago": _ago(now - c["mtime"])})
+        rows.append({"project": name, "cwd": cwd, "ago": _ago(now - c["mtime"]), "mtime": c["mtime"]})
     _write_json(REHIRE_FILE, rows)
 
 

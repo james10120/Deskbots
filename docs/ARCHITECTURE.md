@@ -25,6 +25,8 @@
    runtime/sessions/<id>.json   { state, project, cwd, hwnd, transcript, ts, … }
    runtime/usage.json           ← usage_poll.py 每 2s 解析 transcript 算 token 用量
    runtime/rehire.json          ← usage_poll.py 掃歷史專案，供「重新雇用」
+   runtime/rehire_hidden.json   ← 看板 ✕ 移除的人才庫項目（該專案有新活動會自動回來）
+   runtime/ui_state.json        ← 視窗位置/置頂/看板狀態（main.gd 每 2s 有變才寫，下次開啟還原）
             │
             │  Godot 每秒重讀
             ▼
@@ -153,5 +155,11 @@ start "Claude" powershell.exe -NoExit -Command "Set-Location -LiteralPath '%~1';
 | `app/winfocus.py` | Win32（純 ctypes）：`terminal_hwnd` 抓視窗、`focus` 聚焦、`send_text` 鍵盤注入。 |
 | `app/usage_poll.py` | 背景常駐：解析 transcript 算 token 用量（`usage.json`）、掃歷史專案（`rehire.json`）。 |
 | `app/launch_claude.cmd` | 開新獨立 PowerShell 視窗跑 claude（含 `-c` 重新雇用）。ASCII-only。 |
-| `godot/main.gd` | 地圖 UI：機器人、對話卡、看板、送指令／呼叫終端的觸發點。 |
+| `godot/main.gd` | 主迴圈：session 掃描與狀態機、角色行為、玩家、視窗訊號接線。 |
+| `godot/paths.gd` `util.gd` | 安裝路徑單一出處；JSON 讀寫／樣式／格式化共用小工具。 |
+| `godot/office_map.gd` | 地圖載入、A* 走格、座位/休息點地理。 |
+| `godot/drag_window.gd` | 無邊框透明卡片視窗共用底座（拖曳/卡片），三張卡片視窗的父類。 |
+| `godot/detail_window.gd` | 對話卡：最近一輪 Q&A、送訊息/指令（signal 回 main 執行）。 |
+| `godot/usage_board.gd` | 工作看板：負荷/LV/戰績 + 人才庫（↻ 重新雇用、✕ 移除）。 |
+| `godot/settings_window.gd` | 設定卡：地圖置頂、看板開關、⏻ 離開遊戲。 |
 | `runtime/sessions/*.json` | 每個 session 的狀態（含 hwnd）。emit 寫、Godot 讀。 |

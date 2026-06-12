@@ -16,6 +16,7 @@ static var REHIRE_FILE: String = ROOT + "/runtime/rehire.json"
 static var REHIRE_REMOTE_FILE: String = ROOT + "/runtime/rehire_remote.json"
 static var REHIRE_HIDDEN_FILE: String = ROOT + "/runtime/rehire_hidden.json"
 static var UI_STATE_FILE: String = ROOT + "/runtime/ui_state.json"
+static var ECONOMY_FILE: String = ROOT + "/runtime/economy.json"   # 末日經濟存檔：物資庫存（刻意不隨乾淨模式清除）
 static var SERVERS_FILE: String = ROOT + "/config/servers.json"
 static var BRIDGE_FILE: String = ROOT + "/runtime/bridge.json"
 static var TILED_DIR: String = ROOT + "/assets/tiled/"

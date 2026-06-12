@@ -50,6 +50,8 @@ var _drag_off := Vector2i()
 var _player := {}            # 玩家可控角色（WASD/方向鍵走動）
 var _selected := ""          # 最近一次互動（聚焦/送指令）的 session，看板用來高亮
 var _usage_t := 0.0          # 看板刷新計時
+var _econ_t := 0.0           # 末日經濟累進計時（讀 usage 增量 → 物資）
+var _econ_save_t := 0.0      # 經濟存檔計時（有變動才寫）
 var _ui_t := 0.0             # UI 狀態儲存計時
 var _ui_last := ""           # 上次寫入的 UI 狀態快照（JSON 字串，變了才寫檔）
 var _map: OfficeMap
@@ -59,6 +61,7 @@ var _file_dialog: FileDialog   # 點空椅 → 選資料夾 → 開新 PowerShel
 var _pin_btn: Button           # 右上角釘選鈕（與設定卡的置頂開關同步）
 var _board_btn: Button         # 右上角「看板」鈕（換語言時更新文字）
 var _settings_btn: Button      # 右上角「設定」鈕
+var _hud: Label                # 地圖左上角遊戲資料 HUD（物資/今日收入）
 var _hook_hint: Label          # hook 未安裝時的畫面提示（有 session 就自動隱藏）
 var _hooks_ok := true          # 啟動時偵測：~/.claude/settings.json 是否含本工具的 hook
 var _managed := false          # 被 run_deskbots.ps1 託管（外部已裝 hook/起背景）→ 不自管生命週期
@@ -116,6 +119,8 @@ func _ready() -> void:
 	_make_hook_hint()     # hook 未安裝 → 畫面提示（_bootstrap 後通常已裝好）
 	_restore_ui_state()   # 還原上次的視窗位置/置頂/看板狀態（runtime/ui_state.json）
 	_build_file_dialog()
+	Economy.load_state()   # 還原末日物資庫存（跨次保留，不隨乾淨模式清除）
+	_make_hud()            # 地圖左上角遊戲資料 HUD
 	_scan()   # 立即掃一次
 	_board.refresh(_robots, _selected)
 
@@ -231,6 +236,24 @@ func _make_corner_buttons() -> void:
 	cl.add_child(_settings_btn)
 
 
+func _make_hud() -> void:
+	# 地圖左上角常駐 HUD：末日物資（遊戲資料直接顯示在遊戲視窗，不靠看板）
+	var cl := CanvasLayer.new()
+	add_child(cl)
+	_hud = Label.new()
+	_hud.position = Vector2(8, 6)
+	_hud.add_theme_font_size_override("font_size", 14)
+	_hud.add_theme_color_override("font_color", Color(1.0, 0.82, 0.4))
+	_hud.add_theme_stylebox_override("normal", Util.name_bg())
+	cl.add_child(_hud)
+	_update_hud()
+
+
+func _update_hud() -> void:
+	if _hud != null:
+		_hud.text = Lang.t("board_supplies") % [Util.fmt_tok(int(Economy.supplies)), Util.fmt_tok(int(Economy.today))]
+
+
 func _process(delta: float) -> void:
 	_poll_t += delta
 	if not _debug_mode and _poll_t >= POLL_SEC:
@@ -265,6 +288,20 @@ func _process(delta: float) -> void:
 		if _ui_t <= 0.0:
 			_ui_t = UI_SAVE_SEC
 			_save_ui_state()
+	# 末日經濟：每秒讀 usage.json 增量 → 累進物資 + 專案 XP（不論看板開關都跑）；有變動每 10s 落檔
+	if not _debug_mode and not _shot:
+		_econ_t -= delta
+		if _econ_t <= 0.0:
+			_econ_t = 1.0
+			var pm := {}
+			for sid in _robots:
+				pm[sid] = str(_robots[sid].project)
+			Economy.tick(Util.read_json(Paths.USAGE_FILE), pm)
+			_update_hud()
+		_econ_save_t -= delta
+		if _econ_save_t <= 0.0:
+			_econ_save_t = 10.0
+			Economy.flush()
 
 
 # ── 輸入：點機器人/空椅/空白，拖曳地圖視窗 ──────────────────────
@@ -530,6 +567,7 @@ func _bootstrap() -> void:
 
 func _quit() -> void:
 	_save_ui_state()
+	Economy.save_state()   # 落檔物資庫存（economy.json 不在清理清單，跨次保留）
 	# 停背景行程（py.exe 會生 python 子行程，taskkill /T 連子帶孫清乾淨）
 	for pid in _bg_pids:
 		OS.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
@@ -670,13 +708,15 @@ func _upsert(data: Dictionary) -> void:
 	r.cwd = str(data.get("cwd", ""))
 	r.hwnd = int(data.get("hwnd", 0))
 	r.host = str(data.get("host", ""))   # 非空 = SSH 遠端 session（ssh_bridge 鏡像）
-	r.label.text = project
+	# 名牌＝專案名 + 員工等級（綁專案累積產出，持久、只升不降）
+	var nameplate := "%s  LV%d" % [project, Economy.level_for(project)]
+	r.label.text = nameplate
 	r.label.add_theme_color_override("font_color", Util.STATE_COLOR.get(state, Color.WHITE))
 	r.label.add_theme_stylebox_override("normal", Util.name_bg())
 	r.label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var _lf: Font = r.label.get_theme_font("font")
 	if _lf != null:
-		r.label.position.x = -_lf.get_string_size(project, HORIZONTAL_ALIGNMENT_LEFT, -1, NAMEPLATE_SIZE).x * 0.5 - 2
+		r.label.position.x = -_lf.get_string_size(nameplate, HORIZONTAL_ALIGNMENT_LEFT, -1, NAMEPLATE_SIZE).x * 0.5 - 2
 
 
 func _assign_seat(sid: String) -> int:

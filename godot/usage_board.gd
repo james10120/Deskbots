@@ -244,14 +244,6 @@ func _usage_card(sid: String, r, col: Color, u) -> Control:
 	name.clip_text = true
 	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(name)
-	if u != null:
-		# LV 徽章：依產出量成長（sqrt 曲線，前期升得快後期慢）
-		var lv := 1 + int(sqrt(float(int(u.get("out", 0))) / 10000.0))
-		var lvl := Label.new()
-		lvl.text = "LV %d" % lv
-		lvl.add_theme_font_size_override("font_size", 11)
-		lvl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
-		hb.add_child(lvl)
 	vb.add_child(hb)
 	if u == null:
 		var dash := Label.new()

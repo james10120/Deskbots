@@ -60,8 +60,19 @@ func build(width: int, claude_tex: Texture2D) -> void:
 	node.add_child(spr)
 	node.z_index = 20
 	add_child(node)
-	_claude = {"node": node, "sprite": spr, "x": HOME_X, "dir": 0, "t": 0.0}
+	# CLAUDE CODE 頭上能量條（低紅高綠）
+	var ebg := ColorRect.new()
+	ebg.color = Color(0, 0, 0, 0.55)
+	ebg.size = Vector2(22, 3)
+	ebg.position = Vector2(-11, -FH * SCALE * 0.5 - 8)
+	node.add_child(ebg)
+	var efill := ColorRect.new()
+	efill.size = Vector2(22, 3)
+	efill.position = ebg.position
+	node.add_child(efill)
+	_claude = {"node": node, "sprite": spr, "x": HOME_X, "dir": 0, "t": 0.0, "ebar": efill}
 	_place(node, HOME_X)
+	_update_energy_bar()
 	# 想法泡泡
 	_bubble = Label.new()
 	_bubble.add_theme_font_size_override("font_size", 11)
@@ -91,17 +102,21 @@ func _process(delta: float) -> void:
 		var zf := int(z.t / FRAME_DUR) % FallbackArt.ZFRAMES
 		z.sprite.region_rect = Rect2(zf * FW, 0, FW, FH)
 		if z.x < DOOR_X:
-			dead.append(z)   # 突破門口（第 1 刀先消失，第 2 刀再做損失）
+			dead.append(z)   # 突破門口 → 損失物資
 	for z in dead:
 		z.node.queue_free()
 		_zombies.erase(z)
+		Economy.on_breach()
 	# 3) CLAUDE CODE 自主行動：迎擊最前方（最靠門）殭屍，否則回門口待命
+	#    移速受「戰力」升級加成、被能量拖累；擊退範圍受「戰力」加成
+	var spd := DEF_SPEED * Economy.power_mult() * Economy.energy_factor()
+	var rng := Economy.kill_range()
 	var tgt = _front_zombie()
 	var moving := false
 	if tgt != null:
 		var dx: float = tgt.x - _claude.x
-		if abs(dx) > 13.0:
-			_claude.x += signf(dx) * DEF_SPEED * delta
+		if abs(dx) > rng:
+			_claude.x += signf(dx) * spd * delta
 			_claude.dir = 0 if dx > 0.0 else 2
 			moving = true
 		else:
@@ -109,12 +124,13 @@ func _process(delta: float) -> void:
 	else:
 		var dh: float = HOME_X - _claude.x
 		if abs(dh) > 2.0:
-			_claude.x += signf(dh) * DEF_SPEED * delta
+			_claude.x += signf(dh) * spd * delta
 			_claude.dir = 0 if dh > 0.0 else 2
 			moving = true
 		else:
 			_claude.dir = 0   # 面向荒野待命
 	_place(_claude.node, _claude.x)
+	_update_energy_bar()
 	_claude.t += delta
 	var row := ROW_WALK if moving else ROW_IDLE
 	var f := int(_claude.t / FRAME_DUR) % 6
@@ -125,6 +141,15 @@ func _process(delta: float) -> void:
 	_bubble_t -= delta
 	if _bubble_t <= 0.0:
 		_toggle_bubble()
+
+
+func _update_energy_bar() -> void:
+	var ef = _claude.get("ebar")
+	if ef == null:
+		return
+	var frac := clampf(Economy.energy / Economy.ENERGY_MAX, 0.0, 1.0)
+	ef.size.x = 22.0 * frac
+	ef.color = Color(0.9, 0.4, 0.35).lerp(Color(0.4, 0.85, 0.5), frac)
 
 
 func _ground_y() -> float:

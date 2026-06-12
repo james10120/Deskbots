@@ -36,6 +36,12 @@ const WALK_SPEED := 120.0      # 走動速度 px/s
 const PLAYER_SPEED := 95.0     # 玩家角色走動速度 px/s
 const USAGE_REFRESH := 1.0     # 看板多久刷新一次（秒）
 const UI_SAVE_SEC := 2.0       # UI 狀態（視窗位置等）多久檢查一次、有變才寫檔
+# 趣味性：想法泡泡 / 事件反應 / 摸頭轉圈 / 日夜光線
+const BUBBLE_SHOW := 3.0       # 一則想法泡泡顯示秒數
+const BUBBLE_GAP_MIN := 9.0    # 兩則想法泡泡的最短間隔
+const BUBBLE_GAP_MAX := 18.0   # 最長間隔
+const SPIN_DUR := 0.45         # 摸頭轉一圈的秒數
+const DAYNIGHT_SEC := 30.0     # 多久更新一次日夜色調
 
 var _robots := {}            # session_id -> 角色狀態 dict
 var _project_slots := {}     # session_id -> 座位 index
@@ -51,6 +57,9 @@ var _player := {}            # 玩家可控角色（WASD/方向鍵走動）
 var _selected := ""          # 最近一次互動（聚焦/送指令）的 session，看板用來高亮
 var _usage_t := 0.0          # 看板刷新計時
 var _ui_t := 0.0             # UI 狀態儲存計時
+var _last_hover := ""        # 上一幀滑鼠停在哪隻機器人（摸頭反應用，只在進入時觸發）
+var _daynight: CanvasModulate # 日夜色調（依真實時鐘 modulate 整個地圖）
+var _daynight_t := 0.0       # 日夜更新計時
 var _ui_last := ""           # 上次寫入的 UI 狀態快照（JSON 字串，變了才寫檔）
 var _map: OfficeMap
 var _board: UsageBoard
@@ -105,6 +114,10 @@ func _ready() -> void:
 		_map.draw_grid()
 		return
 	_load_locale()   # 建任何 UI 前先定語言（讀 ui_state.json 的 lang；首次依 OS 語系）
+	# 日夜光線：CanvasModulate 只染預設層（地圖/角色），不影響 CanvasLayer 上的鈕/提示
+	_daynight = CanvasModulate.new()
+	_daynight.color = _daynight_tint(Time.get_time_dict_from_system().hour)
+	add_child(_daynight)
 	_make_player()
 	_build_windows()
 	_make_corner_buttons()
@@ -253,6 +266,19 @@ func _process(delta: float) -> void:
 	for sid in _robots:
 		_update_robot(_robots[sid], delta)
 	_update_player(delta)
+	# 摸頭反應：滑鼠移到某機器人上（進入時觸發一次）→ 冒愛心 + 轉一圈
+	if not _debug_mode and not _shot:
+		var hov := _robot_at(get_viewport().get_mouse_position())
+		if hov != "" and hov != _last_hover and _robots.has(hov):
+			_set_bubble(_robots[hov], "💗", 1.4)
+			_robots[hov].spin_t = SPIN_DUR
+		_last_hover = hov
+		# 日夜光線：依真實時鐘調整地圖色調
+		_daynight_t -= delta
+		if _daynight_t <= 0.0:
+			_daynight_t = DAYNIGHT_SEC
+			if _daynight != null:
+				_daynight.color = _daynight_tint(Time.get_time_dict_from_system().hour)
 	# 工作看板：定期刷新（讀 usage.json / rehire.json）
 	if not _debug_mode and _board != null and _board.visible:
 		_usage_t -= delta
@@ -647,6 +673,16 @@ func _upsert(data: Dictionary) -> void:
 		lbl.z_as_relative = false
 		lbl.add_theme_font_size_override("font_size", NAMEPLATE_SIZE)
 		node.add_child(lbl)
+		# 想法泡泡（名牌上方，平時藏著）
+		var bub := Label.new()
+		bub.position = Vector2(0, -FRAME_H * SCALE * 0.5 - 32)
+		bub.z_index = 4001
+		bub.z_as_relative = false
+		bub.add_theme_font_size_override("font_size", NAMEPLATE_SIZE)
+		bub.add_theme_color_override("font_color", Color(1.0, 0.98, 0.85))
+		bub.add_theme_stylebox_override("normal", Util.name_bg())
+		bub.visible = false
+		node.add_child(bub)
 		add_child(node)
 		node.position = seat
 		r = {
@@ -655,9 +691,19 @@ func _upsert(data: Dictionary) -> void:
 			"moving": false, "dir": 3, "wander_t": 0.0,
 			"resting_now": false, "home_facing": seat_face, "seat_idx": si,
 			"path": PackedVector2Array(), "path_i": 0, "last_target": Vector2(-9999, -9999),
+			"bubble": bub, "bubble_t": 0.0, "bubble_next": randf_range(BUBBLE_GAP_MIN, BUBBLE_GAP_MAX), "spin_t": 0.0,
 		}
 		_robots[sid] = r
 
+	# 事件小反應：狀態切換時冒個 emoji（done 讚、error 汗、waiting 驚嘆）
+	var prev_state: String = str(r.get("state", ""))
+	if state != prev_state and r.has("bubble"):
+		if state == "done":
+			_set_bubble(r, "👍", 1.8)
+		elif state == "error":
+			_set_bubble(r, "💧", 1.8)
+		elif state == "waiting":
+			_set_bubble(r, "❗", 2.0)
 	r.state = state
 	r.character = character
 	r.home = seat
@@ -749,6 +795,55 @@ func _update_robot(r, delta: float) -> void:
 	var frame := int(r.anim_t / FRAME_DUR) % frames
 	var col: int = (int(r.dir) * 6 + frame) if dir_based else frame
 	r.sprite.region_rect = Rect2(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+	_update_bubble(r, delta)
+	# 摸頭轉一圈
+	if float(r.get("spin_t", 0.0)) > 0.0:
+		r.spin_t = float(r.spin_t) - delta
+		r.sprite.rotation = (1.0 - clampf(float(r.spin_t) / SPIN_DUR, 0.0, 1.0)) * TAU
+		if float(r.spin_t) <= 0.0:
+			r.sprite.rotation = 0.0
+
+
+func _update_bubble(r, delta: float) -> void:
+	# 想法泡泡：顯示中倒數收起；沒在顯示就等下一則、依當下狀態挑句
+	var bub = r.get("bubble")
+	if bub == null:
+		return
+	if float(r.bubble_t) > 0.0:
+		r.bubble_t = float(r.bubble_t) - delta
+		if float(r.bubble_t) <= 0.0:
+			bub.visible = false
+		return
+	r.bubble_next = float(r.bubble_next) - delta
+	if float(r.bubble_next) <= 0.0:
+		r.bubble_next = randf_range(BUBBLE_GAP_MIN, BUBBLE_GAP_MAX)
+		_set_bubble(r, Lang.bubble(str(r.state)), BUBBLE_SHOW)
+
+
+func _set_bubble(r, text: String, dur: float) -> void:
+	var bub = r.get("bubble")
+	if bub == null or text == "":
+		return
+	bub.text = text
+	bub.visible = true
+	r.bubble_t = dur
+	# 約略置中於頭頂
+	var f: Font = bub.get_theme_font("font")
+	if f != null:
+		bub.position.x = -f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, NAMEPLATE_SIZE).x * 0.5
+
+
+func _daynight_tint(hour: int) -> Color:
+	# 依真實時鐘給地圖色調（純 modulate 濾鏡，零素材）
+	if hour >= 22 or hour < 6:
+		return Color(0.55, 0.60, 0.85)   # 深夜：冷藍偏暗
+	elif hour < 9:
+		return Color(1.0, 0.92, 0.82)    # 清晨：微暖
+	elif hour < 17:
+		return Color(1.0, 1.0, 1.0)      # 白天：正常
+	elif hour < 20:
+		return Color(1.0, 0.84, 0.66)    # 傍晚：橘調
+	return Color(0.78, 0.74, 0.90)       # 入夜：紫藍
 
 
 # ── 玩家角色（WASD/方向鍵走動）──────────────────────────────────

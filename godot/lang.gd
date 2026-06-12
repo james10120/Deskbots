@@ -143,3 +143,33 @@ static func ago(sec: float) -> String:
 	if sec < 86400.0:
 		return t("ago_hr") % int(sec / 3600.0)
 	return t("ago_day") % int(sec / 86400.0)
+
+
+# 想法泡泡：依機器人當下狀態挑一句碎念（趣味＋一眼看出在幹嘛）
+const BUBBLES := {
+	"zh": {
+		"idle": ["放空中…", "發呆", "喝口咖啡", "摸魚一下"],
+		"thinking": ["思考中…", "嗯…", "讓我想想", "盤算中"],
+		"working": ["敲碼中…", "施工中", "埋頭苦幹", "咔咔咔"],
+		"waiting": ["等你按 yes 啦", "等授權中", "喂～該你了", "卡在這等你"],
+		"done": ["搞定！", "收工", "呼～完成", "下一個"],
+		"error": ["💥 又紅字", "出包了", "糟，報錯", "Bug 出沒"],
+	},
+	"en": {
+		"idle": ["spacing out…", "daydreaming", "coffee break", "slacking a bit"],
+		"thinking": ["thinking…", "hmm…", "let me think", "plotting"],
+		"working": ["coding…", "building", "head down", "clack clack"],
+		"waiting": ["waiting for yes", "needs approval", "yo, your turn", "stuck on you"],
+		"done": ["done!", "wrapped up", "phew, finished", "next one"],
+		"error": ["💥 red text again", "oops", "ugh, an error", "bug spotted"],
+	},
+}
+
+
+static func bubble(state: String) -> String:
+	# 依目前語言＋狀態挑一句碎念；無對應狀態退回 idle
+	var tbl: Dictionary = BUBBLES.get(locale, BUBBLES["zh"])
+	var list: Array = tbl.get(state, tbl.get("idle", []))
+	if list.is_empty():
+		return ""
+	return str(list[randi() % list.size()])

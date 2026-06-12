@@ -846,7 +846,7 @@ func _daynight_tint(hour: int) -> Color:
 	return Color(0.78, 0.74, 0.90)       # 入夜：紫藍
 
 
-# ── 玩家角色（WASD/方向鍵走動）──────────────────────────────────
+# ── 「你」角色（自主 NPC：自己在辦公室晃、走到隨機點、停一下再走）──────
 func _make_player() -> void:
 	var node := Node2D.new()
 	var spr := Sprite2D.new()
@@ -867,31 +867,38 @@ func _make_player() -> void:
 	add_child(node)
 	var start := _map.tile_px(6, 5)   # 通道，保證可走
 	node.position = start
-	_player = {"node": node, "sprite": spr, "label": lbl, "pos": start, "dir": 3, "t": 0.0}
+	_player = {"node": node, "sprite": spr, "label": lbl, "pos": start, "dir": 3, "t": 0.0,
+		"target": start, "path": PackedVector2Array(), "path_i": 0, "wander_t": 0.0}
 
 
 func _update_player(delta: float) -> void:
+	# 自主 NPC：走到隨機可走點 → 到了停一下 → 再挑新點（A* 繞牆，跟工人機器人同套走法）
 	if _player.is_empty():
 		return
-	var v := Vector2.ZERO
-	if Input.is_action_pressed("ui_right") or Input.is_physical_key_pressed(KEY_D): v.x += 1
-	if Input.is_action_pressed("ui_left") or Input.is_physical_key_pressed(KEY_A): v.x -= 1
-	if Input.is_action_pressed("ui_down") or Input.is_physical_key_pressed(KEY_S): v.y += 1
-	if Input.is_action_pressed("ui_up") or Input.is_physical_key_pressed(KEY_W): v.y -= 1
-	var moving: bool = v != Vector2.ZERO
-	if moving:
-		v = v.normalized()
-		var step: Vector2 = v * PLAYER_SPEED * delta
-		var p: Vector2 = _player.pos
-		if _walkable_px(Vector2(p.x + step.x, p.y)):  # 分軸判斷，可沿牆滑行
-			p.x += step.x
-		if _walkable_px(Vector2(p.x, p.y + step.y)):
-			p.y += step.y
-		_player.pos = p
-		if abs(v.x) > abs(v.y):
-			_player.dir = 0 if v.x > 0 else 2
+	var arrived: bool = _player.pos.distance_to(_player.target) < 4.0
+	if arrived:
+		_player.wander_t = float(_player.wander_t) - delta
+		if float(_player.wander_t) <= 0.0:
+			_player.target = _wander_target()
+			_player.path = _map.compute_path(_player.pos, _player.target)
+			_player.path_i = 0
+			_player.wander_t = randf_range(1.5, 5.0)   # 抵達後停留秒數
+	# 沿路徑朝目標走
+	var moving := false
+	var step: Vector2 = _player.target
+	if int(_player.path_i) < _player.path.size():
+		step = _player.path[int(_player.path_i)]
+		if _player.pos.distance_to(step) < 2.0:
+			_player.path_i = int(_player.path_i) + 1
+			step = _player.path[int(_player.path_i)] if int(_player.path_i) < _player.path.size() else _player.target
+	var to: Vector2 = step - _player.pos
+	if _player.pos.distance_to(_player.target) > 3.0 and to.length() > 0.5:
+		_player.pos += to.normalized() * min(PLAYER_SPEED * delta, to.length())
+		moving = true
+		if abs(to.x) > abs(to.y):
+			_player.dir = 0 if to.x > 0.0 else 2
 		else:
-			_player.dir = 1 if v.y < 0 else 3
+			_player.dir = 1 if to.y < 0.0 else 3
 	_player.node.position = _player.pos
 	_player.node.z_index = 1000 + int(_player.pos.y + FRAME_H * SCALE * 0.5)
 	var row := ROW_WALK if moving else ROW_IDLE
@@ -900,9 +907,15 @@ func _update_player(delta: float) -> void:
 	_player.sprite.region_rect = Rect2((int(_player.dir) * 6 + frame) * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
 
 
-func _walkable_px(pos: Vector2) -> bool:
-	var foot := pos + Vector2(0, FRAME_H * SCALE * 0.25)   # 用腳底判斷格子
-	return _map.is_walkable(foot)
+func _wander_target() -> Vector2:
+	# 隨機挑一個可走的內部格當散步目標
+	for _i in 20:
+		var c := randi_range(1, _map.map_w - 2)
+		var r := randi_range(3, _map.map_h - 2)
+		var p := _map.tile_px(c, r)
+		if _map.is_walkable(p):
+			return p
+	return _player.pos
 
 
 # ── debug：--bot 看角色表 ────────────────────────────────────────

@@ -17,9 +17,11 @@ one is waiting for you.
   <img src="docs/img/board.png" width="300" alt="usage board">
 </p>
 
-- **Usage board** — per-session context-load gauge, level, output/read tokens, turn count
-- **Chat card** — click a robot to see the latest Q&A, send messages/slash-commands back
-  to its terminal, or summon the terminal window
+- **Usage board** — per-session context-load gauge, level, output/read tokens, turn count;
+  click a card (or a robot) to bring that session's terminal to the front, with quick
+  `/clear` `/compact` `⎋` buttons on each card
+- **Bilingual UI** — switch the whole interface between 中文 and English in settings
+  (auto-detected from your OS on first launch)
 - **Rehire list** — recently used projects, one click to resume (`claude -c`)
 - **SSH multi-server** — sessions on remote machines appear on the same map; remote
   projects open directly in VS Code Remote at the right working directory
@@ -37,7 +39,7 @@ app/usage_poll.py (daemon)                  state-driven walking/animations, A* 
   └ usage.json / rehire.json            →   usage board, rehire list
 app/ssh_bridge.py (daemon)
   └ ssh <host> remote_agent.py          →   remote sessions mirrored into the same dir
-app/winfocus.py  ←── (chat card send/focus: Win32 focus + keystroke injection)
+app/winfocus.py  ←── (board card focus/quick-commands: Win32 focus + keystroke injection)
 ```
 
 **Core design: the filesystem is the IPC.** Hooks only write, Godot only reads, winfocus
@@ -107,7 +109,7 @@ sessions can join the map too:
 1. Map → top-right **設定 (Settings)** → SSH servers → type `user@ip` → **＋ 連線安裝 (install)**
    — a terminal window opens and does everything: generate/push an SSH key (you type the
    server password once), deploy the remote agent + hooks, register the server.
-2. Remote sessions appear as `project@machine`; their chat card is view-only with an
+2. Remote sessions appear as `project@machine`; their board card shows an
    **Open in VS Code** button that lands in the right folder on the right machine.
 3. The rehire list also shows the remote machine's recent projects — one click opens
    VS Code Remote at that working directory.
@@ -134,7 +136,8 @@ app/
 godot/
   main.gd            main loop: session scan, robot behaviour, window signal wiring
   office_map.gd      map render, A* grid, seat/lounge/wait geography (all data-driven)
-  detail_window.gd   chat card; usage_board.gd board; settings_window.gd settings
+  usage_board.gd     board: usage cards (focus + quick-commands) + rehire list
+  settings_window.gd settings card; lang.gd zh/en UI strings
   drag_window.gd     shared borderless-transparent card window base; paths.gd / util.gd
 assets/              art (PNGs are bring-your-own, see assets/README.md); tiled/*.tmj modules
 config/              servers.json (your SSH server list, gitignored)

@@ -33,27 +33,30 @@
 
 ## 3. 地圖操作
 
-- **點機器人** → 開/關對話卡
+- **點機器人** → 把該 session 的終端視窗叫到最前（遠端 session 改開 VS Code，見 §4）
 - **點空椅子** → 選資料夾，開新 PowerShell 跑 `claude`（新 session 入座）
 - **按住空白處拖曳** → 移動整張地圖
 - **WASD / 方向鍵** → 移動「你」的角色（純散步）
-- 右上角：**設定** / **看板** / **釘選**（地圖永遠置頂）
+- 右上角：**設定** / **看板** / **釘選**（地圖永遠置頂）；按鈕文字隨所選介面語言顯示
 
-視窗位置、置頂狀態、看板高度與顯示等會自動記住（`runtime/ui_state.json`），下次開啟還原。
+視窗位置、置頂狀態、看板高度與顯示、介面語言等會自動記住（`runtime/ui_state.json`），下次開啟還原。
 
-## 4. 對話卡（點機器人）
+## 4. 聚焦終端與快速指令
 
-- 顯示該 session **最近一輪 Q&A**（含工具呼叫摘要）
-- 輸入框送訊息（Enter 送出、Shift+Enter 換行）；快捷鈕 `/clear`、`/compact`、`⎋中斷`
-- **▸ 呼叫終端**：把該 session 的終端視窗叫到最前
-- 送訊息原理是「聚焦終端 + 鍵盤注入」，所以**遠端 session 只顯示內容**，
-  按鈕變成「▸ 在 VS Code 開啟」直達該機該資料夾
-- 顯示「無可用終端」的原因與對策見 [ARCHITECTURE §5](ARCHITECTURE.md#5-失敗模式對話卡顯示無可用終端)
+沒有對話卡了——直接從地圖與看板操作每個 session：
+
+- **點機器人，或點看板上對應的員工卡片** → 把該 session 的終端視窗叫到最前（只聚焦，不送字）
+- 每張**看板卡片**底部有一排快速指令鈕——`/clear`、`/compact`、`⎋`（中斷）——
+  按下會幫你聚焦終端並注入該指令
+- **遠端 session**（`專案@機器`）：鍵盤注入打不到遠端，所以卡片只給一顆
+  **▸ 在 VS Code 開啟**鈕（點卡片本體也一樣），直達該機該資料夾
+- 本地 session 若抓不到終端視窗（`hwnd == 0`），卡片會顯示**「抓不到終端視窗」**提示而非按鈕；
+  原因與對策見 [ARCHITECTURE §5](ARCHITECTURE.md#5-失敗模式看板卡片顯示抓不到終端)
 
 ## 5. 工作看板
 
 - 每個在場 session 一張卡：**負荷量表**（context 佔用，越滿越紅）、LV（隨產出成長）、
-  ⚒ 產出 / 📖 閱讀 token、🔁 回合數；點卡片＝開該 session 對話卡
+  ⚒ 產出 / 📖 閱讀 token、🔁 回合數；外加 §4 的動作列（點卡片本體＝聚焦終端、快速指令鈕）
 - 底部「**拖此調整高度**」把手；標題列 📌 釘選看板（與地圖置頂分開）
 - **人才庫**：近期用過、目前沒在跑的專案（本地＋各遠端機器合併、依最後活動排序）
   - 點本地列 → 開新 PowerShell `claude -c` 接續上次對話（重新雇用）
@@ -63,6 +66,8 @@
 ## 6. 設定卡
 
 - **地圖永遠置頂**（與右上「釘選」同步）、**顯示/隱藏工作看板**
+- **介面語言 / Language**：一鍵把整個介面在中文／English 間即時切換，選擇存進
+  `ui_state.json`；首次啟動依 OS 語系自動判定
 - **SSH 伺服器**：
   - 清單：綠點＝已連線＋在場 session 數；**VS Code** 鈕開該機的 Remote 視窗；✕ 從清單移除
   - 新增：輸入 `user@ip`（或 ssh 別名）→ **＋ 連線安裝** → 跳出終端視窗自動完成
@@ -97,16 +102,16 @@ godot --path godot -- --bot     # 角色表檢視
 | `usage.json` | usage_poll | 各 session token 用量 |
 | `rehire.json` / `rehire_remote.json` | usage_poll / ssh_bridge | 本地 / 遠端人才庫 |
 | `rehire_hidden.json` | 看板 ✕ | 人才庫移除名單（跨次保留） |
-| `ui_state.json` | main.gd | 視窗位置/置頂/看板狀態（跨次保留） |
+| `ui_state.json` | main.gd | 視窗位置/置頂/看板狀態/介面語言（跨次保留） |
 | `bridge.json` | ssh_bridge | 各伺服器連線狀態（設定卡綠點） |
-| `transcripts/` | ssh_bridge | 遠端 transcript 尾段快取（對話卡/心跳用） |
+| `transcripts/` | ssh_bridge | 遠端 transcript 尾段快取（心跳/算 token 用） |
 
 ## 9. 疑難排解
 
 | 症狀 | 原因 / 解法 |
 |------|------------|
 | 機器人沒出現 | session 在地圖開啟**前**就開了 → 重開該 session；或 hooks 沒裝（跑 `py app\apply_settings.py`） |
-| 對話卡「無可用終端」 | 見 [ARCHITECTURE §5](ARCHITECTURE.md)；VS Code 整合終端抓不準，用啟動器/空椅開的獨立 PowerShell 最穩 |
+| 看板卡片「抓不到終端視窗」 | 見 [ARCHITECTURE §5](ARCHITECTURE.md)；VS Code 整合終端抓不準，用啟動器/空椅開的獨立 PowerShell 最穩 |
 | 遠端伺服器灰點（未連線） | `ssh user@ip` 是否免密碼？遠端有 `python3`？防火牆？看 bridge 視窗的重連訊息 |
 | 中文變亂碼 | 終端切 UTF-8（啟動器已自動 `PYTHONUTF8=1`） |
 | 想徹底移除 | `py app\apply_settings.py --remove`（本地）＋ `py app\remote_install.py <host> --remove`（各遠端），刪掉整個資料夾即可，不留任何系統殘留 |

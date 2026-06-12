@@ -37,32 +37,38 @@ used as a heartbeat (stops updating → back to idle).
 
 ## 3. Map controls
 
-- **Click a robot** → open/close its chat card
+- **Click a robot** → bring that session's terminal window to the front (remote sessions
+  open in VS Code instead — see §4)
 - **Click an empty chair** → pick a folder, a new PowerShell window runs `claude` there
   (the new session takes that seat)
 - **Drag empty floor** → move the whole map window
 - **WASD / arrow keys** → walk your own character around (purely cosmetic)
-- Top-right buttons: **設定 (settings)** / **看板 (board)** / **釘選 (pin map always-on-top)**
+- Top-right buttons: **settings** / **board** / **pin map always-on-top** (labels follow
+  the chosen UI language)
 
-Window positions, pin state, board height/visibility are remembered
+Window positions, pin state, board height/visibility, and UI language are remembered
 (`runtime/ui_state.json`) and restored on the next launch.
 
-## 4. Chat card (click a robot)
+## 4. Focusing terminals & quick commands
 
-- Shows the session's **latest Q&A round** (including tool-call summaries)
-- Input box sends a message (Enter to send, Shift+Enter for newline); quick buttons for
-  `/clear`, `/compact`, `⎋ interrupt`
-- **▸ Summon terminal**: brings that session's terminal window to the front
-- Sending works by focusing the terminal and injecting keystrokes, so **remote sessions
-  are view-only** — the button becomes **▸ Open in VS Code**, landing on the right
-  machine and folder
-- For the "no usable terminal" cases and fixes, see
-  [ARCHITECTURE §5](ARCHITECTURE.md) (zh-TW)
+There is no chat card. You drive each session straight from the map and the board:
+
+- **Click a robot, or click its card on the board** → that session's terminal window is
+  brought to the front (focus only; no keystrokes)
+- Each **board card** has a row of quick-command buttons — `/clear`, `/compact`,
+  `⎋` (interrupt) — which focus the terminal and inject the command for you
+- **Remote sessions** (`project@machine`): keystroke injection can't reach them, so the
+  card shows a single **▸ Open in VS Code** button (and clicking the card does the same),
+  landing on the right machine and folder
+- If a local session's terminal can't be captured (`hwnd == 0`), the card shows a
+  **"no terminal window"** notice instead of the buttons — see
+  [ARCHITECTURE §5](ARCHITECTURE.md) (zh-TW) for why and how to fix it
 
 ## 5. Usage board
 
 - One card per live session: **context-load gauge** (the fuller, the redder), LV (grows
-  with output), ⚒ output / 📖 read tokens, 🔁 turns; click a card to open its chat card
+  with output), ⚒ output / 📖 read tokens, 🔁 turns; plus the action row from §4 (focus
+  on click, quick-command buttons). Click the card body to focus that session's terminal
 - Bottom grip drags the board taller; 📌 in the title bar pins the board on top
   (independent of the map pin)
 - **Rehire list** — recently used, currently-not-running projects (local + every remote
@@ -75,6 +81,8 @@ Window positions, pin state, board height/visibility are remembered
 ## 6. Settings card
 
 - **Map always-on-top** (synced with the top-right pin button), **show/hide board**
+- **Language / 語言**: switch the whole UI between 中文 and English instantly; the choice
+  is saved to `ui_state.json`. First launch auto-detects from your OS locale
 - **SSH servers**:
   - list shows a green dot when connected plus the live session count; **VS Code** opens
     a Remote window to that machine; ✕ removes it from the list
@@ -114,14 +122,14 @@ The packaged build supports the same: `godot\Deskbots.exe -- --grid`.
 | `rehire_hidden.json` | board ✕ | rehire removals (survives restarts) |
 | `ui_state.json` | main.gd | window positions/pin/board state (survives restarts) |
 | `bridge.json` | ssh_bridge | per-server connection status (settings card dots) |
-| `transcripts/` | ssh_bridge | cached remote transcript tails (chat card / heartbeat) |
+| `transcripts/` | ssh_bridge | cached remote transcript tails (heartbeat / token parsing) |
 
 ## 9. Troubleshooting
 
 | Symptom | Cause / fix |
 |---------|-------------|
 | No robot appears | session was started **before** the map → restart that session; or hooks not installed (`py app\apply_settings.py`) |
-| Chat card says "no usable terminal" | see [ARCHITECTURE §5](ARCHITECTURE.md); VS Code integrated terminals are unreliable — standalone PowerShell windows (the launcher / empty-chair flow) work best |
+| A board card says "no terminal window" | see [ARCHITECTURE §5](ARCHITECTURE.md); VS Code integrated terminals are unreliable — standalone PowerShell windows (the launcher / empty-chair flow) work best |
 | Server dot stays gray | is `ssh user@ip` passwordless? does the remote have `python3`? firewall? check the bridge window's reconnect log |
 | Garbled CJK output | switch the terminal to UTF-8 (the launcher already sets `PYTHONUTF8=1`) |
 | Full uninstall | `py app\apply_settings.py --remove` (local) + `py app\remote_install.py <host> --remove` (each remote), then delete the folder — nothing else is left on the system |

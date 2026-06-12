@@ -33,7 +33,7 @@ const NAMEPLATE_SIZE := 13     # 名牌字體大小
 const POLL_SEC := 0.4          # 多久掃一次 sessions 資料夾
 const FRAME_DUR := 0.14        # 每幀動畫秒數
 const WALK_SPEED := 120.0      # 走動速度 px/s
-const PLAYER_SPEED := 95.0     # 玩家角色走動速度 px/s
+# 末日防禦改成辦公室下方的「橫向 2D 側視」地帶，邏輯全在 DefenseStrip
 const USAGE_REFRESH := 1.0     # 看板多久刷新一次（秒）
 const UI_SAVE_SEC := 2.0       # UI 狀態（視窗位置等）多久檢查一次、有變才寫檔
 
@@ -47,7 +47,7 @@ var _debug_mode := false
 var _bot_tex := {}           # 角色名 -> Texture2D（BOT1~BOT9）
 var _dragging := false       # 拖曳地圖視窗中
 var _drag_off := Vector2i()
-var _player := {}            # 玩家可控角色（WASD/方向鍵走動）
+var _defense: DefenseStrip   # 辦公室下方的橫向 2D 防禦地帶（CLAUDE CODE 自主防守、殭屍來襲）
 var _selected := ""          # 最近一次互動（聚焦/送指令）的 session，看板用來高亮
 var _usage_t := 0.0          # 看板刷新計時
 var _econ_t := 0.0           # 末日經濟累進計時（讀 usage 增量 → 物資）
@@ -102,13 +102,18 @@ func _ready() -> void:
 	_map = OfficeMap.new()
 	add_child(_map)
 	_map.load_map()
-	get_window().size = _map.window_px_size()
+	var _mp := _map.window_px_size()
+	get_window().size = Vector2i(_mp.x, _mp.y + DefenseStrip.STRIP_H)   # 下方加一條橫向防禦地帶
 	if _has_arg("--grid"):
 		_debug_mode = true       # 持續顯示座標格線（不自動關），供讀座位/休息室座標
 		_map.draw_grid()
 		return
 	_load_locale()   # 建任何 UI 前先定語言（讀 ui_state.json 的 lang；首次依 OS 語系）
-	_make_player()
+	# 末日防禦地帶（辦公室外面、橫向 2D 側視）：接在辦公室下方
+	_defense = DefenseStrip.new()
+	_defense.position = Vector2(0, _mp.y)
+	add_child(_defense)
+	_defense.build(_mp.x, _bot_tex.get("BOT1", null))
 	_build_windows()
 	_make_corner_buttons()
 	# 直接雙擊 exe（非託管、非截圖）→ 自己管理生命週期：裝 hook、起背景、退出還原
@@ -272,10 +277,9 @@ func _process(delta: float) -> void:
 				_settings.get_texture().get_image().save_png(Paths.ROOT + "/runtime/_shot_settings.png")
 			get_tree().quit()
 			return
-	# 行為（移動）+ 動畫
+	# 行為（移動）+ 動畫（防禦地帶 DefenseStrip 有自己的 _process，這裡不用管）
 	for sid in _robots:
 		_update_robot(_robots[sid], delta)
-	_update_player(delta)
 	# 工作看板：定期刷新（讀 usage.json / rehire.json）
 	if not _debug_mode and _board != null and _board.visible:
 		_usage_t -= delta
@@ -525,8 +529,7 @@ func _relabel_chrome() -> void:
 		_hook_hint.text = Lang.t("hook_hint")
 	if _file_dialog != null:
 		_file_dialog.title = Lang.t("filedialog_title")
-	if _player.has("label"):
-		_player.label.text = Lang.t("player_name")
+	# CLAUDE CODE 防禦機器人名牌是品牌名，不隨語言改
 
 
 func _save_ui_state() -> void:
@@ -789,65 +792,6 @@ func _update_robot(r, delta: float) -> void:
 	var frame := int(r.anim_t / FRAME_DUR) % frames
 	var col: int = (int(r.dir) * 6 + frame) if dir_based else frame
 	r.sprite.region_rect = Rect2(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
-
-
-# ── 玩家角色（WASD/方向鍵走動）──────────────────────────────────
-func _make_player() -> void:
-	var node := Node2D.new()
-	var spr := Sprite2D.new()
-	spr.region_enabled = true
-	spr.texture = _bot_tex.get("BOT1", null)
-	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	spr.scale = Vector2(SCALE, SCALE)
-	node.add_child(spr)
-	var lbl := Label.new()
-	lbl.text = Lang.t("player_name")
-	lbl.add_theme_font_size_override("font_size", NAMEPLATE_SIZE)
-	lbl.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
-	lbl.add_theme_stylebox_override("normal", Util.name_bg())
-	lbl.position = Vector2(-7, -FRAME_H * SCALE * 0.5 - 22)
-	lbl.z_index = 4000
-	lbl.z_as_relative = false
-	node.add_child(lbl)
-	add_child(node)
-	var start := _map.tile_px(6, 5)   # 通道，保證可走
-	node.position = start
-	_player = {"node": node, "sprite": spr, "label": lbl, "pos": start, "dir": 3, "t": 0.0}
-
-
-func _update_player(delta: float) -> void:
-	if _player.is_empty():
-		return
-	var v := Vector2.ZERO
-	if Input.is_action_pressed("ui_right") or Input.is_physical_key_pressed(KEY_D): v.x += 1
-	if Input.is_action_pressed("ui_left") or Input.is_physical_key_pressed(KEY_A): v.x -= 1
-	if Input.is_action_pressed("ui_down") or Input.is_physical_key_pressed(KEY_S): v.y += 1
-	if Input.is_action_pressed("ui_up") or Input.is_physical_key_pressed(KEY_W): v.y -= 1
-	var moving: bool = v != Vector2.ZERO
-	if moving:
-		v = v.normalized()
-		var step: Vector2 = v * PLAYER_SPEED * delta
-		var p: Vector2 = _player.pos
-		if _walkable_px(Vector2(p.x + step.x, p.y)):  # 分軸判斷，可沿牆滑行
-			p.x += step.x
-		if _walkable_px(Vector2(p.x, p.y + step.y)):
-			p.y += step.y
-		_player.pos = p
-		if abs(v.x) > abs(v.y):
-			_player.dir = 0 if v.x > 0 else 2
-		else:
-			_player.dir = 1 if v.y < 0 else 3
-	_player.node.position = _player.pos
-	_player.node.z_index = 1000 + int(_player.pos.y + FRAME_H * SCALE * 0.5)
-	var row := ROW_WALK if moving else ROW_IDLE
-	_player.t += delta
-	var frame := int(_player.t / FRAME_DUR) % 6
-	_player.sprite.region_rect = Rect2((int(_player.dir) * 6 + frame) * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
-
-
-func _walkable_px(pos: Vector2) -> bool:
-	var foot := pos + Vector2(0, FRAME_H * SCALE * 0.25)   # 用腳底判斷格子
-	return _map.is_walkable(foot)
 
 
 # ── debug：--bot 看角色表 ────────────────────────────────────────

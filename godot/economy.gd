@@ -40,6 +40,13 @@ static func save_state() -> void:
 	_dirty = false
 
 
+static func reward(n: float) -> void:
+	# 擊退殭屍等即時獎勵 → 直接進物資
+	supplies += n
+	today += n
+	_dirty = true
+
+
 static func level_for(project: String) -> int:
 	# 員工(專案)等級：依歷來累積產出，sqrt 曲線——升得越來越慢但永遠往上、不封頂、不重置
 	var xp := float(proj_xp.get(project, 0.0))

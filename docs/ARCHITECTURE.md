@@ -1,7 +1,10 @@
-# 架構：對話卡 ↔ PowerShell 終端
+# 架構：看板卡片 / 機器人 ↔ PowerShell 終端
 
-說明地圖裡的「對話卡」如何跟每個 Claude Code session 所在的 **PowerShell / 終端視窗**互動——
-怎麼抓到那個視窗、怎麼把訊息和斜線指令打進去、以及為什麼有時會「抓不到終端」。
+說明地圖裡點「機器人」或「看板卡片」如何跟每個 Claude Code session 所在的 **PowerShell / 終端視窗**互動——
+怎麼抓到那個視窗、快速指令怎麼打進去、以及為什麼有時會「抓不到終端」。
+
+> 註：早期版本有獨立「對話卡」顯示對話內容並送訊息；現已移除。互動改為**點機器人/看板卡片＝聚焦終端**、
+> **看板卡片上的快速指令鈕**（`/clear`、`/compact`、`⎋`），底層的聚焦＋鍵盤注入機制完全相同。
 
 ---
 
@@ -33,7 +36,7 @@
         ├ 遠端 agent：2s 一次 session 快照（狀態在遠端衰減、時間送 age 免時鐘偏差、
         │             transcript 尾段有變才附）+ 30s 掃遠端 ~/.claude/projects
         ├ 鏡像寫 runtime/sessions/<label>__<id>.json（專案名@label、hwnd=0）
-        ├ transcript 尾段落地 runtime/transcripts/ 並把路徑指過去 → 心跳/對話卡原樣生效
+        ├ transcript 尾段落地 runtime/transcripts/ 並把路徑指過去 → 心跳/token 解析原樣生效
         ├ runtime/bridge.json         ← 連線狀態（設定卡綠點/在場數）
         └ runtime/rehire_remote.json  ← 遠端人才庫（點了開 VS Code Remote 直達資料夾）
             │
@@ -41,10 +44,9 @@
             ▼
    ┌──────────────── Godot 地圖（main.gd）─────────────────┐
    │   機器人精靈（依 state 換動畫）                          │
-   │   點機器人 → 開「對話卡」(_detail_win)                   │
-   │        ├ 顯示最近一輪 Q&A（讀 transcript）              │
-   │        ├ 輸入框 + 快捷鈕（/clear /compact ⎋中斷）      │
-   │        └ 「▸ 呼叫這個 session 的終端視窗」鈕            │
+   │   點機器人／點看板卡片本體 → 聚焦該 session 終端         │
+   │   看板卡片底部快捷鈕（/clear /compact ⎋）→ 注入指令     │
+   │   （遠端 session：改開 VS Code Remote，不走注入）        │
    │                  │                                     │
    │                  │ 用該 session 的 hwnd                 │
    │                  ▼                                     │
@@ -94,18 +96,19 @@ def terminal_hwnd(session_id):
 
 ---
 
-## 3. 對話卡怎麼送訊息 / 指令給 Claude
+## 3. 點機器人 / 看板卡片怎麼聚焦終端、送指令
 
-對話卡（`_detail_win`，一個獨立 Godot `Window`）底部有三種互動，都走同一條路：
+互動入口在地圖機器人與工作看板（`usage_board.gd`）卡片，發 signal 回 `main.gd` 落地，
+全走同一條 Win32 路：
 
-| UI | 動作 | 呼叫 |
+| UI | 動作 | 呼叫（main.gd） |
 |----|------|------|
-| 輸入框 Enter | 送一句話給 Claude | `_send_to_selected(text)` |
-| `/clear` `/compact` 快捷鈕 | 送斜線指令 | `_send_to_selected("/clear")` |
-| `⎋中斷` 鈕 | 中斷 Claude 當前動作 | `_send_to_selected("<ESC>")` |
-| `▸ 呼叫終端` 鈕 | 只把終端叫到最前（不送字） | `_focus_selected_terminal()` |
+| 點機器人 / 點看板卡片本體 | 把終端叫到最前（不送字） | `_focus_terminal(sid)` |
+| 看板卡片 `/clear` `/compact` 鈕 | 送斜線指令 | `_send_command(sid, "/clear")` |
+| 看板卡片 `⎋` 鈕 | 中斷 Claude 當前動作 | `_send_command(sid, "<ESC>")` |
+| 遠端 session（卡片本體或「在 VS Code 開啟」鈕） | 開 VS Code Remote 直達該機該資料夾 | `_focus_terminal(sid)` 內分支 |
 
-兩者最後都 `OS.create_process("py", ["…/winfocus.py", str(hwnd), …])`，把實際的 Win32 操作丟給獨立 python 行程（Godot 不碰 ctypes）。
+本地 session 最後都 `OS.create_process("py", ["…/winfocus.py", str(hwnd), …])`，把實際的 Win32 操作丟給獨立 python 行程（Godot 不碰 ctypes）。
 
 `winfocus.send_text(hwnd, text)` 的注入流程：
 1. `focus(hwnd)`：按住 Alt 繞過 `SetForegroundWindow` 限制 → 把終端叫到最前。
@@ -113,8 +116,6 @@ def terminal_hwnd(session_id):
 3. 用 `SendInput` + `KEYEVENTF_UNICODE` **逐個 UTF-16 code unit** 打字（支援中文 / emoji）。
 4. 停 0.15s 給 TUI 一拍處理（斜線指令選單），再送 `Enter`。
 5. 特例 `text == "<ESC>"`：只送一個 `VK_ESCAPE`，不送 Enter。
-
-> **行為（commit bd1ffe0）**：按「呼叫終端」後**不**關對話卡，方便接著繼續送訊息。
 
 ---
 
@@ -137,10 +138,10 @@ start "Claude" powershell.exe -NoExit -Command "Set-Location -LiteralPath '%~1';
 
 ---
 
-## 5. 失敗模式：對話卡顯示「無可用終端」
+## 5. 失敗模式：看板卡片顯示「抓不到終端」
 
-當 session JSON 的 `hwnd == 0`，送訊息 / 呼叫終端都無法用。對話卡會**明確提示**而非靜默失敗
-（`_refresh_detail`）：輸入框變灰、橘字說明、按鈕閃 `_detail_hint`。
+當 session JSON 的 `hwnd == 0`，聚焦 / 送指令都無法用。看板卡片會**明確提示**而非靜默失敗
+（`usage_board._card_actions`）：該卡片的快速指令鈕換成橘字「⚠ 抓不到終端視窗（重開 session 才生效）」。
 
 | 情況 | 為什麼 hwnd=0 | 對策 |
 |------|--------------|------|
@@ -190,8 +191,8 @@ Godot 的 mtime 心跳對遠端照常生效。
 | `godot/main.gd` | 主迴圈：session 掃描與狀態機、角色行為、玩家、視窗訊號接線。 |
 | `godot/paths.gd` `util.gd` | 安裝路徑單一出處；JSON 讀寫／樣式／格式化共用小工具。 |
 | `godot/office_map.gd` | 地圖載入、A* 走格、座位/休息點地理。 |
-| `godot/drag_window.gd` | 無邊框透明卡片視窗共用底座（拖曳/卡片），三張卡片視窗的父類。 |
-| `godot/detail_window.gd` | 對話卡：最近一輪 Q&A、送訊息/指令（signal 回 main 執行）。 |
-| `godot/usage_board.gd` | 工作看板：負荷/LV/戰績 + 人才庫（↻ 重新雇用、✕ 移除）。 |
-| `godot/settings_window.gd` | 設定卡：地圖置頂、看板開關、⏻ 離開遊戲。 |
+| `godot/drag_window.gd` | 無邊框透明卡片視窗共用底座（拖曳/卡片），看板與設定卡的父類。 |
+| `godot/usage_board.gd` | 工作看板：負荷/LV/戰績 + 卡片動作列（聚焦終端、快速指令）+ 人才庫（↻ 重新雇用、✕ 移除）。 |
+| `godot/settings_window.gd` | 設定卡：地圖置頂、看板開關、中英語言切換、⏻ 離開遊戲。 |
+| `godot/lang.gd` | 介面語言字串表（zh/en）+ `Lang.t(key)`；行程內共享 `locale`。 |
 | `runtime/sessions/*.json` | 每個 session 的狀態（含 hwnd）。emit 寫、Godot 讀。 |

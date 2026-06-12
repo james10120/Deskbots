@@ -1,26 +1,30 @@
 class_name UsageBoard
 extends DragWindow
-# 工作看板：在場 session 卡片（負荷量表 + LV + 產出/閱讀/回合）+ 全公司合計
+# 工作看板：在場 session 卡片（負荷量表 + LV + 產出/閱讀/回合 + 動作列）+ 全公司合計
 # + 人才庫（可重新雇用的歷史專案，含 ✕ 移除）。
+# 卡片本體＝聚焦該 session 終端（遠端開 VS Code）；卡片動作列＝快速指令（本地）。
 # 資料來源：usage.json / rehire.json（usage_poll.py 寫）；robots 由 main 每次 refresh 傳入。
 
-signal card_clicked(sid: String)                      # 點 session 卡片 → main 開/關對話卡
+signal focus_requested(sid: String)                   # 點 session 卡片本體 → 聚焦該終端（遠端開 VS Code）
+signal command_requested(sid: String, text: String)   # 卡片快速指令鈕 → 注入該終端（/clear /compact ⎋）
 signal rehire_requested(cwd: String, host: String)    # 點人才庫列 → 本地開終端 claude -c；遠端開 VS Code
 
 const USAGE_W := 260            # 看板視窗寬
 const USAGE_MIN_H := 220        # 看板最小高（拉高把手的下限）
 const CONTEXT_MAX := 200000.0   # 負荷量表的分母（context 上限；超過=超出負荷）
-# 負荷比例 → 遊戲字眼（由低到高，取第一個達標的）
+# 負荷比例 → 遊戲字眼（由低到高，取第一個達標的）；字串存 Lang key，渲染時才翻譯
 const LOAD_WORDS := [
-	[0.30, "游刃有餘", Color(0.55, 0.85, 0.60)],
-	[0.55, "漸入佳境", Color(0.70, 0.85, 0.55)],
-	[0.75, "全神貫注", Color(0.95, 0.85, 0.45)],
-	[0.90, "火力全開", Color(1.00, 0.65, 0.35)],
-	[1.00, "瀕臨極限", Color(1.00, 0.45, 0.35)],
+	[0.30, "load_relaxed", Color(0.55, 0.85, 0.60)],
+	[0.55, "load_warming", Color(0.70, 0.85, 0.55)],
+	[0.75, "load_focused", Color(0.95, 0.85, 0.45)],
+	[0.90, "load_full", Color(1.00, 0.65, 0.35)],
+	[1.00, "load_limit", Color(1.00, 0.45, 0.35)],
 ]
-const LOAD_OVER := ["⚠ 工作量超出負荷", Color(1.0, 0.35, 0.30)]
+const LOAD_OVER := ["load_over", Color(1.0, 0.35, 0.30)]
 
 var _box: VBoxContainer        # 卡片容器（每次刷新重建內容）
+var _heading: Label            # 標題列文字（換語言時即時更新）
+var _grip: Label               # 底部拉高把手文字
 var _pin_btn: Button           # 釘選鈕（還原狀態時要同步外觀）
 var _resizing := false         # 拖底部把手調整高度中
 var _departed: Array = []      # 人才庫：可重新雇用的歷史專案 [{project, cwd, ago, mtime}]
@@ -30,7 +34,7 @@ var _selected := ""
 
 
 func build() -> void:
-	title = "Deskbots 工作看板"
+	title = Lang.t("board_title")
 	init_frame(Vector2i(USAGE_W, 380))
 	close_requested.connect(hide)
 	_hidden = _load_hidden()
@@ -40,17 +44,17 @@ func build() -> void:
 	var headrow := HBoxContainer.new()
 	headrow.add_theme_constant_override("separation", 6)
 	vbox.add_child(headrow)
-	var heading := Label.new()
-	heading.text = "⚒ 工作看板"
-	heading.add_theme_font_size_override("font_size", 15)
-	heading.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
-	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	make_drag_handle(heading)
-	headrow.add_child(heading)
+	_heading = Label.new()
+	_heading.text = Lang.t("board_heading")
+	_heading.add_theme_font_size_override("font_size", 15)
+	_heading.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
+	_heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	make_drag_handle(_heading)
+	headrow.add_child(_heading)
 	_pin_btn = Button.new()
 	_pin_btn.text = "📌"
 	_pin_btn.toggle_mode = true
-	_pin_btn.tooltip_text = "釘選看板：永遠置頂（與地圖分開）"
+	_pin_btn.tooltip_text = Lang.t("board_pin_tip")
 	_pin_btn.focus_mode = Control.FOCUS_NONE
 	_pin_btn.add_theme_font_size_override("font_size", 12)
 	_pin_btn.toggled.connect(_set_pin)
@@ -72,15 +76,27 @@ func build() -> void:
 	_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_box)
 	# 底部拉高把手
-	var grip := Label.new()
-	grip.text = "··· 拖此調整高度 ···"
-	grip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	grip.add_theme_font_size_override("font_size", 10)
-	grip.add_theme_color_override("font_color", Color(0.5, 0.55, 0.65))
-	grip.mouse_filter = Control.MOUSE_FILTER_STOP
-	grip.mouse_default_cursor_shape = Control.CURSOR_VSIZE
-	grip.gui_input.connect(_on_grip)
-	vbox.add_child(grip)
+	_grip = Label.new()
+	_grip.text = Lang.t("board_grip")
+	_grip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_grip.add_theme_font_size_override("font_size", 10)
+	_grip.add_theme_color_override("font_color", Color(0.5, 0.55, 0.65))
+	_grip.mouse_filter = Control.MOUSE_FILTER_STOP
+	_grip.mouse_default_cursor_shape = Control.CURSOR_VSIZE
+	_grip.gui_input.connect(_on_grip)
+	vbox.add_child(_grip)
+
+
+func relocalize() -> void:
+	# 換語言：靜態文字即時更新；卡片/合計/人才庫由 refresh 重建（讀 Lang）立即跟上
+	title = Lang.t("board_title")
+	if _heading != null:
+		_heading.text = Lang.t("board_heading")
+	if _pin_btn != null:
+		_pin_btn.tooltip_text = Lang.t("board_pin_tip")
+	if _grip != null:
+		_grip.text = Lang.t("board_grip")
+	refresh(_robots_ref, _selected)
 
 
 func _process(delta: float) -> void:
@@ -144,7 +160,7 @@ func refresh(robots: Dictionary, selected: String) -> void:
 		var r = robots[sid]
 		var u = usage.get(sid, null)
 		var col: Color = Util.STATE_COLOR.get(str(r.state), Color.WHITE)
-		_box.add_child(_usage_card(str(sid), str(r.project), col, u))
+		_box.add_child(_usage_card(str(sid), r, col, u))
 		shown += 1
 		if u != null:
 			t_in += int(u.get("in", 0))
@@ -153,7 +169,7 @@ func refresh(robots: Dictionary, selected: String) -> void:
 			t_turns += int(u.get("turns", 0))
 	if shown == 0:
 		var empty := Label.new()
-		empty.text = "辦公室空無一人…"
+		empty.text = Lang.t("board_empty")
 		empty.add_theme_font_size_override("font_size", 12)
 		empty.add_theme_color_override("font_color", Color(0.55, 0.58, 0.66))
 		_box.add_child(empty)
@@ -163,17 +179,17 @@ func refresh(robots: Dictionary, selected: String) -> void:
 		var tot := VBoxContainer.new()
 		tot.add_theme_constant_override("separation", 1)
 		var h := Label.new()
-		h.text = "🏢 全公司 · %d 人上工" % shown
+		h.text = Lang.t("board_company") % shown
 		h.add_theme_font_size_override("font_size", 12)
 		h.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
 		tot.add_child(h)
 		var l := Label.new()
-		l.text = "⚒ 產出 %s   📖 閱讀 %s" % [Util.fmt_tok(t_out), Util.fmt_tok(t_in + t_cache)]
+		l.text = Lang.t("board_totals") % [Util.fmt_tok(t_out), Util.fmt_tok(t_in + t_cache)]
 		l.add_theme_font_size_override("font_size", 12)
 		l.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
 		tot.add_child(l)
 		var l2 := Label.new()
-		l2.text = "🔁 共 %d 回合" % t_turns
+		l2.text = Lang.t("board_turns") % t_turns
 		l2.add_theme_font_size_override("font_size", 12)
 		l2.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
 		tot.add_child(l2)
@@ -182,7 +198,7 @@ func refresh(robots: Dictionary, selected: String) -> void:
 	if _departed.size() > 0:
 		_box.add_child(HSeparator.new())
 		var dh := Label.new()
-		dh.text = "📋 人才庫 · 點擊重新雇用"
+		dh.text = Lang.t("board_rehire_head")
 		dh.add_theme_font_size_override("font_size", 12)
 		dh.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9))
 		_box.add_child(dh)
@@ -192,13 +208,13 @@ func refresh(robots: Dictionary, selected: String) -> void:
 
 func _on_card_input(event: InputEvent, sid: String) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		card_clicked.emit(sid)
+		focus_requested.emit(sid)
 
 
-func _usage_card(sid: String, project: String, col: Color, u) -> Control:
+func _usage_card(sid: String, r, col: Color, u) -> Control:
 	var card := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	# 被點選的 session 卡片高亮邊框，呼應對話框正在看的對象
+	# 最近一次互動的 session 卡片高亮邊框
 	sb.bg_color = Color(0.17, 0.20, 0.28, 0.78) if sid == _selected else Color(0.14, 0.15, 0.20, 0.72)
 	if sid == _selected:
 		sb.set_border_width_all(1)
@@ -206,7 +222,7 @@ func _usage_card(sid: String, project: String, col: Color, u) -> Control:
 	sb.set_corner_radius_all(8)
 	sb.set_content_margin_all(8)
 	card.add_theme_stylebox_override("panel", sb)
-	# 點卡片 = 跳到對應 session（同點機器人：開/關該 session 的對話卡）
+	# 點卡片本體 = 聚焦該 session 終端（遠端開 VS Code）；快速指令鈕另走自己的 signal
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	card.gui_input.connect(func(e): _on_card_input(e, sid))
@@ -222,7 +238,7 @@ func _usage_card(sid: String, project: String, col: Color, u) -> Control:
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(dot)
 	var name := Label.new()
-	name.text = project
+	name.text = str(r.project)
 	name.add_theme_font_size_override("font_size", 13)
 	name.add_theme_color_override("font_color", Color(0.92, 0.94, 1.0))
 	name.clip_text = true
@@ -239,52 +255,90 @@ func _usage_card(sid: String, project: String, col: Color, u) -> Control:
 	vb.add_child(hb)
 	if u == null:
 		var dash := Label.new()
-		dash.text = "統計中…"
+		dash.text = Lang.t("board_computing")
 		dash.add_theme_font_size_override("font_size", 12)
 		dash.add_theme_color_override("font_color", Color(0.5, 0.53, 0.6))
 		vb.add_child(dash)
-		return card
-	# 負荷量表（context 佔用 → 遊戲字眼）
-	var ctx := int(u.get("context_now", 0))
-	var frac: float = float(ctx) / CONTEXT_MAX
-	var word: String = LOAD_OVER[0]
-	var wcol: Color = LOAD_OVER[1]
-	for lw in LOAD_WORDS:
-		if frac < float(lw[0]):
-			word = lw[1]
-			wcol = lw[2]
-			break
-	var clab := Label.new()
-	clab.text = "負荷 %d%%  ·  %s" % [int(frac * 100.0), word]
-	clab.add_theme_font_size_override("font_size", 11)
-	clab.add_theme_color_override("font_color", wcol)
-	vb.add_child(clab)
-	var pb := ProgressBar.new()
-	pb.max_value = CONTEXT_MAX
-	pb.value = clamp(float(ctx), 0.0, CONTEXT_MAX)
-	pb.show_percentage = false
-	pb.custom_minimum_size = Vector2(0, 8)
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.08, 0.09, 0.12, 1.0)
-	bg.set_corner_radius_all(4)
-	var fill := StyleBoxFlat.new()
-	# 負荷越高越偏紅
-	fill.bg_color = Color(0.35, 0.7, 0.45).lerp(Color(0.9, 0.4, 0.35), clamp(frac, 0.0, 1.0))
-	fill.set_corner_radius_all(4)
-	pb.add_theme_stylebox_override("background", bg)
-	pb.add_theme_stylebox_override("fill", fill)
-	vb.add_child(pb)
-	# 戰績：產出（out）/ 閱讀（in+cache）/ 回合
-	var stats := Label.new()
-	stats.text = "⚒ %s   📖 %s   🔁 %d" % [
-		Util.fmt_tok(int(u.get("out", 0))),
-		Util.fmt_tok(int(u.get("in", 0)) + int(u.get("cache", 0))),
-		int(u.get("turns", 0)),
-	]
-	stats.add_theme_font_size_override("font_size", 12)
-	stats.add_theme_color_override("font_color", Color(0.68, 0.72, 0.8))
-	vb.add_child(stats)
+	else:
+		# 負荷量表（context 佔用 → 遊戲字眼）
+		var ctx := int(u.get("context_now", 0))
+		var frac: float = float(ctx) / CONTEXT_MAX
+		var word: String = LOAD_OVER[0]
+		var wcol: Color = LOAD_OVER[1]
+		for lw in LOAD_WORDS:
+			if frac < float(lw[0]):
+				word = lw[1]
+				wcol = lw[2]
+				break
+		var clab := Label.new()
+		clab.text = Lang.t("board_load") % [int(frac * 100.0), Lang.t(word)]
+		clab.add_theme_font_size_override("font_size", 11)
+		clab.add_theme_color_override("font_color", wcol)
+		vb.add_child(clab)
+		var pb := ProgressBar.new()
+		pb.max_value = CONTEXT_MAX
+		pb.value = clamp(float(ctx), 0.0, CONTEXT_MAX)
+		pb.show_percentage = false
+		pb.custom_minimum_size = Vector2(0, 8)
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0.08, 0.09, 0.12, 1.0)
+		bg.set_corner_radius_all(4)
+		var fill := StyleBoxFlat.new()
+		# 負荷越高越偏紅
+		fill.bg_color = Color(0.35, 0.7, 0.45).lerp(Color(0.9, 0.4, 0.35), clamp(frac, 0.0, 1.0))
+		fill.set_corner_radius_all(4)
+		pb.add_theme_stylebox_override("background", bg)
+		pb.add_theme_stylebox_override("fill", fill)
+		vb.add_child(pb)
+		# 戰績：產出（out）/ 閱讀（in+cache）/ 回合
+		var stats := Label.new()
+		stats.text = "⚒ %s   📖 %s   🔁 %d" % [
+			Util.fmt_tok(int(u.get("out", 0))),
+			Util.fmt_tok(int(u.get("in", 0)) + int(u.get("cache", 0))),
+			int(u.get("turns", 0)),
+		]
+		stats.add_theme_font_size_override("font_size", 12)
+		stats.add_theme_color_override("font_color", Color(0.68, 0.72, 0.8))
+		vb.add_child(stats)
+	# 動作列：本地→快速指令；遠端→開 VS Code；抓不到終端→提示
+	vb.add_child(_card_actions(sid, r))
 	return card
+
+
+func _card_actions(sid: String, r) -> Control:
+	# 遠端 session（鍵盤注入打不到遠端）→ 只給「開 VS Code」
+	var host := str(r.get("host", ""))
+	if host != "":
+		var vbtn := Button.new()
+		vbtn.text = Lang.t("vscode_open")
+		vbtn.tooltip_text = Lang.t("vscode_open_tip") % [host, str(r.get("cwd", ""))]
+		vbtn.focus_mode = Control.FOCUS_NONE
+		vbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		Util.style_btn(vbtn, Color(0.20, 0.34, 0.52, 0.85), Color(0.26, 0.42, 0.62, 0.95), Color(0.92, 0.96, 1.0), 12)
+		vbtn.pressed.connect(func(): focus_requested.emit(sid))
+		return vbtn
+	# 本地但抓不到終端視窗（hwnd=0）→ 明確提示，不給按鈕（送字/聚焦都打不到）
+	if int(r.get("hwnd", 0)) == 0:
+		var warn := Label.new()
+		warn.text = Lang.t("no_terminal")
+		warn.add_theme_font_size_override("font_size", 11)
+		warn.add_theme_color_override("font_color", Color(1.0, 0.7, 0.4))
+		warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		return warn
+	# 本地有終端 → 快速指令鈕（送出後 winfocus 會先聚焦再注入）
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	for q in [["/clear", "/clear"], ["/compact", "/compact"], ["⎋", "<ESC>"]]:
+		var qb := Button.new()
+		qb.text = q[0]
+		qb.tooltip_text = Lang.t("cmd_tip") % q[1]
+		qb.focus_mode = Control.FOCUS_NONE
+		qb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		Util.style_btn(qb, Color(0.22, 0.24, 0.32, 0.85), Color(0.30, 0.33, 0.43, 0.95), Color(0.88, 0.92, 1.0), 12)
+		var cmd: String = q[1]
+		qb.pressed.connect(func(): command_requested.emit(sid, cmd))
+		row.add_child(qb)
+	return row
 
 
 # ── 人才庫（離職名單 + 重新雇用 + ✕ 移除）──────────────────────
@@ -293,11 +347,14 @@ func _rehire_row(d: Dictionary) -> Control:
 	row.add_theme_constant_override("separation", 4)
 	var btn := Button.new()
 	var host := str(d.get("host", ""))
-	btn.text = "↻ %s   %s" % [str(d.get("project", "?")), str(d.get("ago", ""))]
+	# 相對時間在 Godot 端依語言重算（用 mtime）；沒有 mtime 才退回資料層的 ago 字串
+	var mt := float(d.get("mtime", 0.0))
+	var ago := Lang.ago(Time.get_unix_time_from_system() - mt) if mt > 0.0 else str(d.get("ago", ""))
+	btn.text = "↻ %s   %s" % [str(d.get("project", "?")), ago]
 	if host != "":
-		btn.tooltip_text = "開 VS Code Remote 到 %s 的 %s" % [host, str(d.get("cwd", ""))]
+		btn.tooltip_text = Lang.t("rehire_tip_remote") % [host, str(d.get("cwd", ""))]
 	else:
-		btn.tooltip_text = "重新雇用：在 %s 開新終端、接續上次對話 (claude -c)" % str(d.get("cwd", ""))
+		btn.tooltip_text = Lang.t("rehire_tip_local") % str(d.get("cwd", ""))
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	btn.clip_text = true
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -308,7 +365,7 @@ func _rehire_row(d: Dictionary) -> Control:
 	# 移除：不想再看到的專案；之後該專案有新活動會自動回到人才庫
 	var rm := Button.new()
 	rm.text = "✕"
-	rm.tooltip_text = "從人才庫移除（該專案之後有新活動會再出現）"
+	rm.tooltip_text = Lang.t("rehire_rm_tip")
 	Util.style_btn(rm, Color(0.24, 0.14, 0.16, 0.8), Color(0.50, 0.20, 0.22, 0.9), Color(1.0, 0.8, 0.8), 11)
 	rm.pressed.connect(func(): _hide_rehire(d))
 	row.add_child(rm)

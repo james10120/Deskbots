@@ -8,8 +8,7 @@ extends Node2D
 #   util.gd             — JSON 讀寫、樣式、格式化等共用小工具
 #   office_map.gd       — 地圖載入、A* 走格、座位/休息點地理
 #   drag_window.gd      — 無邊框透明卡片視窗共用底座（拖曳/卡片）
-#   detail_window.gd    — 對話卡（最近一輪 Q&A、送訊息/指令）
-#   usage_board.gd      — 工作看板（負荷/LV/戰績 + 人才庫）
+#   usage_board.gd      — 工作看板（負荷/LV/戰績 + 人才庫 + 卡片快速指令）
 #   settings_window.gd  — 設定卡（置頂/看板開關、離開遊戲）
 # 本檔只留：session 掃描與狀態機、角色行為與動畫、玩家、視窗訊號接線。
 
@@ -49,17 +48,17 @@ var _bot_tex := {}           # 角色名 -> Texture2D（BOT1~BOT9）
 var _dragging := false       # 拖曳地圖視窗中
 var _drag_off := Vector2i()
 var _player := {}            # 玩家可控角色（WASD/方向鍵走動）
-var _selected := ""          # 被點選顯示進度的 session
-var _detail_t := 0.0         # 對話卡刷新計時
+var _selected := ""          # 最近一次互動（聚焦/送指令）的 session，看板用來高亮
 var _usage_t := 0.0          # 看板刷新計時
 var _ui_t := 0.0             # UI 狀態儲存計時
 var _ui_last := ""           # 上次寫入的 UI 狀態快照（JSON 字串，變了才寫檔）
 var _map: OfficeMap
-var _detail: DetailWindow
 var _board: UsageBoard
 var _settings: SettingsWindow
 var _file_dialog: FileDialog   # 點空椅 → 選資料夾 → 開新 PowerShell+claude
 var _pin_btn: Button           # 右上角釘選鈕（與設定卡的置頂開關同步）
+var _board_btn: Button         # 右上角「看板」鈕（換語言時更新文字）
+var _settings_btn: Button      # 右上角「設定」鈕
 var _hook_hint: Label          # hook 未安裝時的畫面提示（有 session 就自動隱藏）
 var _hooks_ok := true          # 啟動時偵測：~/.claude/settings.json 是否含本工具的 hook
 var _managed := false          # 被 run_deskbots.ps1 託管（外部已裝 hook/起背景）→ 不自管生命週期
@@ -105,6 +104,7 @@ func _ready() -> void:
 		_debug_mode = true       # 持續顯示座標格線（不自動關），供讀座位/休息室座標
 		_map.draw_grid()
 		return
+	_load_locale()   # 建任何 UI 前先定語言（讀 ui_state.json 的 lang；首次依 OS 語系）
 	_make_player()
 	_build_windows()
 	_make_corner_buttons()
@@ -127,17 +127,12 @@ static func _has_arg(name: String) -> bool:
 
 
 func _build_windows() -> void:
-	# 三張卡片視窗：對話卡 / 工作看板 / 設定卡。先 add_child 再 build（旗標需要視窗存在）
-	_detail = DetailWindow.new()
-	add_child(_detail)
-	_detail.build()
-	_detail.send_requested.connect(_send_to_selected)
-	_detail.focus_requested.connect(_focus_selected_terminal)
-	_detail.closed.connect(func(): _selected = "")
+	# 兩張卡片視窗：工作看板 / 設定卡。先 add_child 再 build（旗標需要視窗存在）
 	_board = UsageBoard.new()
 	add_child(_board)
 	_board.build()
-	_board.card_clicked.connect(_on_board_card)
+	_board.focus_requested.connect(_focus_terminal)        # 點卡片本體 → 聚焦該終端（遠端開 VS Code）
+	_board.command_requested.connect(_send_command)        # 卡片快速指令鈕 → 注入該終端
 	_board.rehire_requested.connect(_rehire)
 	# 位置與是否顯示由 _restore_ui_state 決定（首次啟動預設開在地圖右側）
 	_settings = SettingsWindow.new()
@@ -148,6 +143,7 @@ func _build_windows() -> void:
 	_settings.add_server_requested.connect(_add_server)
 	_settings.vscode_requested.connect(_open_vscode)
 	_settings.remove_server_requested.connect(_remove_server)
+	_settings.lang_change_requested.connect(_apply_lang)
 	_settings.quit_requested.connect(_quit)
 
 
@@ -157,7 +153,7 @@ func _make_hook_hint() -> void:
 	var cl := CanvasLayer.new()
 	add_child(cl)
 	_hook_hint = Label.new()
-	_hook_hint.text = "尚未偵測到 Claude Code hook\n\n正常雙擊 Deskbots.exe 會自動安裝；若仍看到此訊息，\n多半是找不到 Python（py）——請先安裝 Python，\n或手動執行一次  py app\\apply_settings.py，\n再開新的 Claude session。"
+	_hook_hint.text = Lang.t("hook_hint")
 	_hook_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hook_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hook_hint.add_theme_font_size_override("font_size", 15)
@@ -206,33 +202,33 @@ func _make_corner_buttons() -> void:
 	var cl := CanvasLayer.new()
 	add_child(cl)
 	_pin_btn = Button.new()
-	_pin_btn.text = "釘選"
+	_pin_btn.text = Lang.t("c_pin")
 	_pin_btn.toggle_mode = true
-	_pin_btn.tooltip_text = "釘選：地圖永遠置頂（再按取消）"
+	_pin_btn.tooltip_text = Lang.t("c_pin_tip")
 	_pin_btn.focus_mode = Control.FOCUS_NONE
 	_pin_btn.size = Vector2(48, 26)
 	_pin_btn.position = Vector2(get_window().size.x - 52, 4)
 	_pin_btn.add_theme_font_size_override("font_size", 13)
 	_pin_btn.toggled.connect(_on_pin_toggled)
 	cl.add_child(_pin_btn)
-	var ub := Button.new()
-	ub.text = "看板"
-	ub.tooltip_text = "顯示/隱藏工作看板"
-	ub.focus_mode = Control.FOCUS_NONE
-	ub.size = Vector2(48, 26)
-	ub.position = Vector2(get_window().size.x - 104, 4)
-	ub.add_theme_font_size_override("font_size", 13)
-	ub.pressed.connect(_toggle_board)
-	cl.add_child(ub)
-	var sb := Button.new()
-	sb.text = "設定"
-	sb.tooltip_text = "設定：置頂/看板開關、離開遊戲"
-	sb.focus_mode = Control.FOCUS_NONE
-	sb.size = Vector2(48, 26)
-	sb.position = Vector2(get_window().size.x - 156, 4)
-	sb.add_theme_font_size_override("font_size", 13)
-	sb.pressed.connect(_toggle_settings)
-	cl.add_child(sb)
+	_board_btn = Button.new()
+	_board_btn.text = Lang.t("c_board")
+	_board_btn.tooltip_text = Lang.t("c_board_tip")
+	_board_btn.focus_mode = Control.FOCUS_NONE
+	_board_btn.size = Vector2(48, 26)
+	_board_btn.position = Vector2(get_window().size.x - 104, 4)
+	_board_btn.add_theme_font_size_override("font_size", 13)
+	_board_btn.pressed.connect(_toggle_board)
+	cl.add_child(_board_btn)
+	_settings_btn = Button.new()
+	_settings_btn.text = Lang.t("c_settings")
+	_settings_btn.tooltip_text = Lang.t("c_settings_tip")
+	_settings_btn.focus_mode = Control.FOCUS_NONE
+	_settings_btn.size = Vector2(48, 26)
+	_settings_btn.position = Vector2(get_window().size.x - 156, 4)
+	_settings_btn.add_theme_font_size_override("font_size", 13)
+	_settings_btn.pressed.connect(_toggle_settings)
+	cl.add_child(_settings_btn)
 
 
 func _process(delta: float) -> void:
@@ -251,23 +247,12 @@ func _process(delta: float) -> void:
 				_board.get_texture().get_image().save_png(Paths.SHOT_BOARD_FILE)
 			if _settings != null and _settings.visible:   # 設定卡開著也存一張
 				_settings.get_texture().get_image().save_png(Paths.ROOT + "/runtime/_shot_settings.png")
-			if _detail != null and _detail.visible:   # 對話卡開著也存一張
-				_detail.get_texture().get_image().save_png(Paths.ROOT + "/runtime/_shot_detail.png")
 			get_tree().quit()
 			return
 	# 行為（移動）+ 動畫
 	for sid in _robots:
 		_update_robot(_robots[sid], delta)
 	_update_player(delta)
-	# 對話卡：開著就定期刷新內容；對象消失就收起來
-	if _detail != null:
-		if _selected != "" and _robots.has(_selected) and _detail.visible:
-			_detail_t -= delta
-			if _detail_t <= 0.0:
-				_detail_t = 1.0
-				_detail.refresh(_robots[_selected])
-		elif _detail.visible and (_selected == "" or not _robots.has(_selected)):
-			_detail.hide()
 	# 工作看板：定期刷新（讀 usage.json / rehire.json）
 	if not _debug_mode and _board != null and _board.visible:
 		_usage_t -= delta
@@ -290,7 +275,7 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			var hit := _robot_at(get_viewport().get_mouse_position())
 			if hit != "":
-				_on_robot_click(hit)           # 點機器人 = 開/關對話卡
+				_focus_terminal(hit)           # 點機器人 = 聚焦該 session 終端（遠端開 VS Code）
 				_dragging = false
 			elif _empty_seat_at(get_viewport().get_mouse_position()):
 				_file_dialog.popup_centered(Vector2i(780, 540))   # 點空椅 = 開新 session
@@ -325,50 +310,37 @@ func _empty_seat_at(mp: Vector2) -> bool:
 	return false
 
 
-func _on_robot_click(sid: String) -> void:
-	# 點機器人 → 開對話卡（最近一輪 Q&A）；再點一次（或點 ✕）關閉
-	if sid == _selected and _detail.visible:
-		_selected = ""
-		_detail.hide()
-	else:
-		_selected = sid
-		_detail.refresh(_robots[sid])
-		_detail.open_centered(get_window().current_screen)
-
-
-func _on_board_card(sid: String) -> void:
-	if _robots.has(sid):
-		_on_robot_click(sid)                    # 與點機器人一致：開/關該 session 對話卡
-		_board.refresh(_robots, _selected)      # 立即更新卡片高亮
-
-
-# ── 視窗動作（對話卡/看板/設定卡發出的 signal 在這裡落地）────────
-func _send_to_selected(text: String) -> void:
-	# 聚焦該 session 的終端 → 鍵盤注入文字 + Enter（送訊息或 /clear 等斜線指令）
-	if _selected == "" or not _robots.has(_selected) or text == "":
+# ── 視窗動作（看板/設定卡發出的 signal 在這裡落地）──────────────
+func _focus_terminal(sid: String) -> void:
+	# 點機器人或看板卡片本體 → 把該 session 的終端叫到最前；遠端改開 VS Code Remote
+	if not _robots.has(sid):
 		return
-	var hw := int(_robots[_selected].get("hwnd", 0))
-	if hw == 0:
-		_detail.flash_hint()
-		return
-	OS.create_process("py", [Paths.APP_DIR + "/winfocus.py", str(hw), "--send", text])
-
-
-func _focus_selected_terminal() -> void:
-	if _selected == "" or not _robots.has(_selected):
-		return
-	var r = _robots[_selected]
+	_selected = sid
+	var r = _robots[sid]
 	var host := str(r.get("host", ""))
 	if host != "":
 		# 遠端 session：開 VS Code Remote-SSH 到該機該資料夾（code 是 .cmd shim，要走 cmd /c）
 		OS.create_process("cmd.exe", ["/c", "code", "--remote", "ssh-remote+" + host, str(r.get("cwd", ""))])
+	else:
+		var hw := int(r.get("hwnd", 0))
+		if hw != 0:
+			OS.create_process("py", [Paths.APP_DIR + "/winfocus.py", str(hw)])
+		# hwnd=0 時看板卡片已顯示「抓不到終端」提示，這裡不做事
+	if _board != null and _board.visible:
+		_board.refresh(_robots, _selected)      # 立即更新卡片高亮
+
+
+func _send_command(sid: String, text: String) -> void:
+	# 卡片快速指令鈕 → 聚焦該 session 終端 → 鍵盤注入文字 + Enter（/clear /compact；<ESC> 只送 ESC）
+	if not _robots.has(sid) or text == "":
 		return
-	var hw := int(r.get("hwnd", 0))
+	_selected = sid
+	var hw := int(_robots[sid].get("hwnd", 0))
 	if hw == 0:
-		_detail.flash_hint()
 		return
-	OS.create_process("py", [Paths.APP_DIR + "/winfocus.py", str(hw)])
-	# 不自動關對話卡：叫出終端後通常還要繼續送訊息／下指令
+	OS.create_process("py", [Paths.APP_DIR + "/winfocus.py", str(hw), "--send", text])
+	if _board != null and _board.visible:
+		_board.refresh(_robots, _selected)
 
 
 func _rehire(cwd: String, host: String) -> void:
@@ -456,12 +428,7 @@ func _restore_ui_state() -> void:
 	_board.set_pin_state(bool(bd.get("pin", false)))
 	if bool(bd.get("visible", true)):
 		_board.show()
-	# 對話卡 / 設定卡：記住上次位置，之後開啟原地出現（不再置中）
-	var dt: Dictionary = st.get("detail", {})
-	if dt.has("x"):
-		var dp := Vector2i(int(dt.get("x", 0)), int(dt.get("y", 0)))
-		if _pos_on_screen(dp, _detail.size):
-			_detail.restore_position(dp)
+	# 設定卡：記住上次位置，之後開啟原地出現（不再置中）
 	var sg: Dictionary = st.get("settings", {})
 	if sg.has("x"):
 		var sp := Vector2i(int(sg.get("x", 0)), int(sg.get("y", 0)))
@@ -477,12 +444,52 @@ func _ui_snapshot() -> Dictionary:
 		"board": {"x": _board.position.x, "y": _board.position.y, "h": _board.size.y,
 			"pin": _board.always_on_top, "visible": _board.visible},
 	}
-	# 對話卡/設定卡只在位置已知後才記（避免存到從未開過的預設原點）
-	if _detail.placed:
-		st["detail"] = {"x": _detail.position.x, "y": _detail.position.y}
+	# 設定卡只在位置已知後才記（避免存到從未開過的預設原點）
 	if _settings.placed:
 		st["settings"] = {"x": _settings.position.x, "y": _settings.position.y}
+	st["lang"] = Lang.locale
 	return st
+
+
+# ── 介面語言（zh/en）─────────────────────────────────────────────
+func _load_locale() -> void:
+	# 建任何 UI 前呼叫：有存檔用存檔，否則依 OS 語系猜一次
+	var j = Util.read_json(Paths.UI_STATE_FILE)
+	var st: Dictionary = j if j != null else {}
+	var loc := str(st.get("lang", ""))
+	Lang.set_locale(loc if loc != "" else Lang.detect())
+
+
+func _apply_lang(loc: String) -> void:
+	if Lang.locale == loc:
+		return
+	Lang.set_locale(loc)
+	# 各視窗靜態文字即時換；動態內容（卡片/伺服器列）由各自 relocalize/刷新跟上
+	if _board != null:
+		_board.relocalize()
+	if _settings != null:
+		_settings.relocalize()
+	_relabel_chrome()
+	_save_ui_state()   # 立刻把語言寫進 ui_state.json
+
+
+func _relabel_chrome() -> void:
+	# 右上角小鈕 / hook 提示 / 選資料夾對話框 / 玩家名牌
+	if _pin_btn != null:
+		_pin_btn.text = Lang.t("c_pin")
+		_pin_btn.tooltip_text = Lang.t("c_pin_tip")
+	if _board_btn != null:
+		_board_btn.text = Lang.t("c_board")
+		_board_btn.tooltip_text = Lang.t("c_board_tip")
+	if _settings_btn != null:
+		_settings_btn.text = Lang.t("c_settings")
+		_settings_btn.tooltip_text = Lang.t("c_settings_tip")
+	if _hook_hint != null:
+		_hook_hint.text = Lang.t("hook_hint")
+	if _file_dialog != null:
+		_file_dialog.title = Lang.t("filedialog_title")
+	if _player.has("label"):
+		_player.label.text = Lang.t("player_name")
 
 
 func _save_ui_state() -> void:
@@ -546,7 +553,7 @@ func _build_file_dialog() -> void:
 	_file_dialog = FileDialog.new()
 	_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 	_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	_file_dialog.title = "選擇專案資料夾 → 開新 PowerShell 跑 claude"
+	_file_dialog.title = Lang.t("filedialog_title")
 	_file_dialog.use_native_dialog = true
 	_file_dialog.dir_selected.connect(_on_folder_selected)
 	add_child(_file_dialog)
@@ -584,6 +591,8 @@ func _scan() -> void:
 		if not seen.has(sid):
 			_robots[sid].node.queue_free()
 			_robots.erase(sid)
+			if sid == _selected:
+				_selected = ""   # 高亮對象離場 → 清掉，免得看板留著對不上的高亮
 
 
 func _upsert(data: Dictionary) -> void:
@@ -752,7 +761,7 @@ func _make_player() -> void:
 	spr.scale = Vector2(SCALE, SCALE)
 	node.add_child(spr)
 	var lbl := Label.new()
-	lbl.text = "你"
+	lbl.text = Lang.t("player_name")
 	lbl.add_theme_font_size_override("font_size", NAMEPLATE_SIZE)
 	lbl.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
 	lbl.add_theme_stylebox_override("normal", Util.name_bg())
@@ -763,7 +772,7 @@ func _make_player() -> void:
 	add_child(node)
 	var start := _map.tile_px(6, 5)   # 通道，保證可走
 	node.position = start
-	_player = {"node": node, "sprite": spr, "pos": start, "dir": 3, "t": 0.0}
+	_player = {"node": node, "sprite": spr, "label": lbl, "pos": start, "dir": 3, "t": 0.0}
 
 
 func _update_player(delta: float) -> void:
